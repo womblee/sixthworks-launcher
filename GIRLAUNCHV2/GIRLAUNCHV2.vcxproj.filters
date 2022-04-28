@@ -1,0 +1,42 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClInclude Include="xorstr.h" />
+    <ClInclude Include="bsod.h">
+      <Filter>protection</Filter>
+    </ClInclude>
+    <ClInclude Include="anti_bad.h">
+      <Filter>protection</Filter>
+    </ClInclude>
+    <ClInclude Include="thread_pool.h" />
+    <ClInclude Include="resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="bsod.cpp">
+      <Filter>protection</Filter>
+    </ClCompile>
+    <ClCompile Include="anti_bad.cpp">
+      <Filter>protection</Filter>
+    </ClCompile>
+    <ClCompile Include="thread_pool.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="libcurl_a_debug.lib" />
+    <Library Include="libcurl_a.lib" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="protection">
+      <UniqueIdentifier>{3e3a9b4d-2b1a-467d-9c64-d4dfbe83636b}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="sixthworks.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resource.rc" />
+  </ItemGroup>
+</Project>
