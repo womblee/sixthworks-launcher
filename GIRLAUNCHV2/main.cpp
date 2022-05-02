@@ -489,9 +489,6 @@ void run()
             std::ofstream rest(update_path, std::ios::out | std::ios::trunc);
             rest << json.dump(4);
             rest.close();
-
-            // Notify the user about the issue
-            throw_error(xorstr_("Update data is not present, consider running the software again."));
         }
     }
 
