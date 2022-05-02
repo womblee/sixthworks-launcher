@@ -44,7 +44,7 @@ std::string g_remembered_tag{};
 
 // Download
 std::filesystem::path g_path{};
-std::string g_flname{};
+std::string g_file_name{};
 ULONGLONG g_time{};
 
 void set_text_color(int color = 15)
@@ -287,16 +287,23 @@ int64_t get_current_timestamp()
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-std::string get_local_update_date()
+std::filesystem::path get_update_path()
 {
     std::filesystem::path file_path = temporary_directory();
     file_path /= xorstr_("updates_data.json");
+
+    return file_path;
+}
+
+std::string get_local_update_date()
+{
+    std::filesystem::path file_path = get_update_path();
 
     nlohmann::json json;
     std::ifstream file(file_path);
 
     if (!file.fail())
-    {
+    {    
         file >> json;
 
         // We do this to validate if the user has this game's local time.
@@ -307,6 +314,7 @@ std::string get_local_update_date()
                 key = el.key();
         }
 
+        // If we got a result
         if (!key.empty())
         {
             int64_t timestamp = json[key][xorstr_("last_update")];
@@ -320,11 +328,10 @@ std::string get_local_update_date()
     return xorstr_("");
 }
 
-// Must be ran after downloading
+// Ideally should be ran after the download function
 void set_local_update_date()
 {
-    std::filesystem::path file_path = temporary_directory();
-    file_path /= xorstr_("updates_data.json");
+    std::filesystem::path file_path = get_update_path();
 
     nlohmann::json json;
     std::ifstream file(file_path);
@@ -333,8 +340,10 @@ void set_local_update_date()
     {
         file >> json;
 
+        // Update json
         json[g_tag][xorstr_("last_update")] = get_current_timestamp();
 
+        // Create or update the file
         std::ofstream rest(file_path, std::ios::out | std::ios::trunc);
         rest << json.dump(4);
         rest.close();
@@ -344,7 +353,7 @@ void set_local_update_date()
 void get_bonzo()
 {
     // Downloads folder + file name
-    std::string site = xorstr_("http://localhost/backend/downloads/") + g_flname;
+    std::string site = xorstr_("http://localhost/backend/downloads/") + g_file_name;
 
     // File variable
     FILE* fp;
@@ -402,23 +411,19 @@ void main_dbg_check()
 
 DWORD process_id(std::string name)
 {
-    // Create a snapshot of all running processes
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
     if (hSnapshot == INVALID_HANDLE_VALUE)
         return false;
 
-    // Used to store the process info in the loop
     PROCESSENTRY32 ProcEntry;
     ProcEntry.dwSize = sizeof(PROCESSENTRY32);
 
-    // Get the first process
     if (Process32First(hSnapshot, &ProcEntry)) {
         do
         {
             _bstr_t b(ProcEntry.szExeFile);
             const char* c = b;
 
-            // If the found process name is equal to the on we are searching for
             if (!strcmp(c, name.c_str()))
             {
                 CloseHandle(hSnapshot);
@@ -431,17 +436,18 @@ DWORD process_id(std::string name)
     return 0;
 }
 
-void inject()
+void run()
 {
     // Variable for our process name
     std::string desired_process{};
 
+    // Get the process code to inject to, if th
     int hits = 0;
     for (auto& el : g_list.items())
     {
         if (el.key() == g_tag)
         {
-            std::string temp = g_list[g_tag][xorstr_("process")];
+            std::string temp = g_list[g_tag][xorstr_("file_info")][xorstr_("process")];
             if (!temp.empty())
             {
                 desired_process = temp;
@@ -451,14 +457,42 @@ void inject()
     }
 
     // If something messed up
-    if (hits == 0)
+    if (hits <= 0)
         throw_error(xorstr_("Couldn't figure out which process the cheat should inject to. Consider contacting an administrator."));
 
     // Find the game process id
     DWORD id = process_id(desired_process);
     if (!id)
-    {
         throw_error(xorstr_("Process of the game was not found."));
+
+    // Fill the empty variables with data
+    g_file_name = g_list[g_tag][xorstr_("file_info")][xorstr_("name")];
+    g_path = temporary_directory();
+    g_path /= g_file_name;
+
+    // Get the path
+    std::filesystem::path update_path = get_update_path();
+
+    // Do not allow the user to have the file without the update data
+    if (std::filesystem::exists(g_path))
+    {
+        // Check if the update data doesn't exist
+        if (!std::filesystem::exists(update_path))
+        {
+            // Delete the file
+            std::filesystem::remove(g_path);
+
+            // Empty json
+            nlohmann::json json;
+
+            // Create a dummy file
+            std::ofstream rest(update_path, std::ios::out | std::ios::trunc);
+            rest << json.dump(4);
+            rest.close();
+
+            // Notify the user about the issue
+            throw_error(xorstr_("Update data is not present, consider running the software again."));
+        }
     }
 
     // UNIX time
@@ -469,16 +503,12 @@ void inject()
     int last_update_int = std::stoi(last_update); // Can be 0, but this value is manual
     int local_last_update_int = local_last_update.empty() ? 0 : std::stoi(local_last_update); // Can be 0
 
-    // Define g_path and others
-    g_flname = g_list[g_tag][xorstr_("file_info")][xorstr_("name")];
-    g_path = temporary_directory();
-    g_path /= g_flname;
-
     // Safe switch is to prevent a bug where user doesn't have the file, but has the JSON.
     bool safe_switch = false;
     while (true)
     {
-        if ((last_update_int > local_last_update_int) || safe_switch)
+        bool download = (last_update_int > local_last_update_int) || safe_switch;
+        if (download)
         {
             // Print some info
             pretty_print(xorstr_("Downloading..."));
@@ -512,52 +542,83 @@ void inject()
     // Check if it exists again
     if (std::filesystem::exists(g_path))
     {
-        // Open the process
-        HANDLE process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, id);
-        if (!process)
+        // List of file extensions that the program itself supports
+        std::vector<std::string> supported_types
         {
-            throw_error(xorstr_("Failed to open the process."));
+            xorstr_(".dll"),
+            xorstr_(".exe"),
+        };
+
+        int i = 0;
+        for (const auto& rs : supported_types)
+        {
+            if (g_path.extension() == rs)
+                i++;
         }
 
-        // Allocate space in the process for the dll 
-        LPVOID memory = LPVOID(VirtualAllocEx(process, nullptr, MAX_PATH, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-        if (!memory)
+        // Supported file types
+        if (i <= 0)
+            throw_error(xorstr_("File type is not supported, please contact an administrator."));
+
+        // Execution based on file type
+        std::string type = g_list[g_tag][xorstr_("file_info")][xorstr_("type")];
+        if (type == xorstr_("dll"))
         {
-            throw_error(xorstr_("Failed to allocate memory in the process."));
-        }
+            // Open the process
+            HANDLE process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, id);
+            if (!process)
+                throw_error(xorstr_("Failed to open the process."));
 
-        // Write the string name of our dll in the allocated memory
-        if (!WriteProcessMemory(process, memory, g_path.string().c_str(), MAX_PATH, nullptr))
+            // Allocate space in the process for the dll 
+            LPVOID memory = LPVOID(VirtualAllocEx(process, nullptr, MAX_PATH, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            if (!memory)
+                throw_error(xorstr_("Failed to allocate memory in the process."));
+
+            // Write the string name of our dll in the allocated memory
+            if (!WriteProcessMemory(process, memory, g_path.string().c_str(), MAX_PATH, nullptr))
+                throw_error(xorstr_("Failed to write in process's memory."));
+
+            // Get the module
+            HMODULE h_module = GetModuleHandleA(xorstr_("kernel32.dll"));
+            if (h_module == INVALID_HANDLE_VALUE || h_module == nullptr)
+                throw_error(xorstr_("Failed to get the module handle."));
+
+            // Get the LoadLibraryA adress
+            FARPROC function_address = GetProcAddress(h_module, xorstr_("LoadLibraryA"));
+            if (function_address == nullptr)
+                throw_error(xorstr_("Failed to get the loadlibrary function address."));
+
+            // Load the dll
+            HANDLE thread = CreateRemoteThread(process, nullptr, NULL, LPTHREAD_START_ROUTINE(function_address), memory, NULL, nullptr);
+            if (!thread)
+                throw_error(xorstr_("Failed to create a remote thread."));
+
+            // To make sure that our DLL is injected, we can use the following two calls to block program execution
+            DWORD exit_code = 0;
+
+            WaitForSingleObject(thread, INFINITE);
+            GetExitCodeThread(thread, &exit_code);
+
+            // Let the program regain control of itself
+            CloseHandle(process);
+
+            // Free the allocated memory.
+            VirtualFreeEx(process, LPVOID(memory), 0, MEM_RELEASE);
+
+            // Congratulate
+            pretty_print(xorstr_("Injection success."));
+        }
+        else if (type == xorstr_("exe"))
         {
-            throw_error(xorstr_("Failed to write in process's memory."));
+            // Convert to the needed data-type
+            _bstr_t b = g_path.string().c_str();
+
+            // Execution
+            ShellExecute(0, 0, b, 0, 0, SW_SHOWDEFAULT);
+
+            // Congratulate
+            pretty_print(xorstr_("Process started."));
         }
-
-        // Get the module
-        const HMODULE h_module = GetModuleHandleA(xorstr_("kernel32.dll"));
-        if (h_module == INVALID_HANDLE_VALUE || h_module == nullptr)
-        {
-            throw_error(xorstr_("Failed to get the module handle."));
-        }
-
-        // Get the LoadLibraryA adress
-        const FARPROC function_address = GetProcAddress(h_module, xorstr_("LoadLibraryA"));
-        if (function_address == nullptr)
-        {
-            throw_error(xorstr_("Failed to get the loadlibrary function address."));
-        }
-
-        // Load the dll
-        HANDLE thread = CreateRemoteThread(process, nullptr, NULL, LPTHREAD_START_ROUTINE(function_address), memory, NULL, nullptr);
-        if (!thread)
-        {
-            throw_error(xorstr_("Failed to create a remote thread."));
-        }
-
-        // Let the program regain control of itself
-        CloseHandle(process);
-
-        // Free the allocated memory.
-        VirtualFreeEx(process, LPVOID(memory), 0, MEM_RELEASE);
     }
     else
     {
@@ -612,7 +673,7 @@ int main()
         // Custom window title
         if (GetStdHandle(STD_OUTPUT_HANDLE) != nullptr)
         {
-            SetConsoleTitleA(xorstr_("Sixthworks launcher"));
+            SetConsoleTitleA(xorstr_("Sixthworks"));
             SetConsoleOutputCP(CP_UTF8);
         }
 
@@ -718,7 +779,7 @@ int main()
             }
             attempts = 0;
         }
-
+        
         // Ask the user about his game choice
         if (g_tag.empty())
         {
@@ -772,7 +833,7 @@ int main()
             }
 
             // Check if no hits
-            if (hits == 0)
+            if (hits <= 0)
                 throw_error(xorstr_("Invalid game choice."));
 
             // Clear the console, because the number looks kinda bad above the text
@@ -830,11 +891,10 @@ int main()
                 // Clear the console, we don't need any info on screen anymore
                 system(xorstr_("cls"));
 
-                // Injection
-                inject();
+                // Execute our hack
+                run();
 
-                // We have injected the hack with success, congratulate the user and give him some time to read
-                pretty_print(xorstr_("Injected successfully, terminating."));
+                // Terminate process with delay
                 terminate(true);
             }
             else
