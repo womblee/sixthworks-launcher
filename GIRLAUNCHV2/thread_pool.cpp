@@ -1,4 +1,4 @@
-#include "thread_pool.h"
+#include "thread_pool.hpp"
 #include <Windows.h>
 
 thread_pool::thread_pool() : m_accept_jobs(true), m_data_condition(), m_job_stack(), m_lock()

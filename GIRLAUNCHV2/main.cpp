@@ -20,46 +20,19 @@
 #include <string>
 #include <sstream>
 
-#include "xorstr.h"
-#include "thread_pool.h"
-#include "anti_bad.h"
-#include "bsod.h"
-
-// Definitions
-#define _PTR_MAX_VALUE ((PVOID)0x000F000000000000)
-
-// Static auth
-bool g_auth_static = false;
-std::string static_name = xorstr_("config.json");
-
-// Auth
-nlohmann::json g_auth_data;
-
-// Version
-std::string g_current_version = xorstr_("v1");
-std::string g_version{};
-
-// Game selection
-nlohmann::json g_list;
-std::string g_tag{};
-std::string g_remembered_tag{};
-
-// Download
-std::filesystem::path g_path{};
-std::string g_file_name{};
-ULONGLONG g_time{};
-
-// Utilities
-constexpr bool is_valid_ptr(PVOID p)
-{
-    return (p >= (PVOID)0x10000) && (p < _PTR_MAX_VALUE) && p != nullptr;
-}
+#include "globals.hpp"
+#include "xorstr.hpp"
+#include "thread_pool.hpp"
+#include "protection.hpp"
+#include "bsod.hpp"
 
 void set_text_color(int color = 15)
 {
     HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
     if (console)
+    {
         SetConsoleTextAttribute(console, color);
+    }
 }
 
 void set_console_things(const char* title)
@@ -74,15 +47,7 @@ void set_console_things(const char* title)
 
 void clear_console()
 {
-#if defined _WIN32
     system(xorstr_("cls"));
-    // clrscr(); // Including header file : conio.h
-#elif defined (__LINUX__) || defined(__gnu_linux__) || defined(__linux__)
-    system(xorstr_("clear"));
-    // std::cout<< u8"\033[2J\033[1;1H"; // Using ANSI Escape Sequences 
-#elif defined (__APPLE__)
-    system(xorstr_("clear"));
-#endif
 }
 
 // Structs
@@ -155,20 +120,25 @@ std::filesystem::path temporary_directory()
     return path;
 }
 
-void terminate(int delay)
+// Termination with delay
+int terminate(int delay)
 {
     if (delay >= 0)
         std::this_thread::sleep_for(std::chrono::seconds(delay));
 
-    TerminateProcess(GetCurrentProcess(), 0);
+    return TerminateProcess(GetCurrentProcess(), 0);
 }
 
-void throw_error(const char* error)
+// Custom error function
+int throw_error(const char* error)
 {
+    // Print the error
     pretty_print(error, 12);
+
+    // Terminate
     terminate(3);
 
-    return;
+    return -1;
 }
 
 enum class INTERNET_STATUS
@@ -182,23 +152,24 @@ enum class INTERNET_STATUS
 INTERNET_STATUS is_connected_to_internet()
 {
     INTERNET_STATUS status = INTERNET_STATUS::CONNECTION_ERROR;
-    HRESULT hr = S_FALSE;
+    HRESULT result = S_FALSE;
+
     try
     {
-        hr = CoInitialize(NULL);
-        if (SUCCEEDED(hr))
+        result = CoInitialize(NULL);
+        if (SUCCEEDED(result))
         {
             INetworkListManager* network_manager;
-            hr = CoCreateInstance(CLSID_NetworkListManager, NULL, CLSCTX_ALL, __uuidof(INetworkListManager), (LPVOID*)&network_manager);
+            result = CoCreateInstance(CLSID_NetworkListManager, NULL, CLSCTX_ALL, __uuidof(INetworkListManager), (LPVOID*)&network_manager);
             
-            if (SUCCEEDED(hr))
+            if (SUCCEEDED(result))
             {
                 NLM_CONNECTIVITY connectivity = NLM_CONNECTIVITY::NLM_CONNECTIVITY_DISCONNECTED;
                 VARIANT_BOOL is_connected = VARIANT_FALSE;
 
-                hr = network_manager->get_IsConnectedToInternet(&is_connected);
+                result = network_manager->get_IsConnectedToInternet(&is_connected);
 
-                if (SUCCEEDED(hr))
+                if (SUCCEEDED(result))
                 {
                     if (is_connected == VARIANT_TRUE)
                         status = INTERNET_STATUS::CONNECTED;
@@ -209,9 +180,7 @@ INTERNET_STATUS is_connected_to_internet()
                 if (is_connected == VARIANT_FALSE && SUCCEEDED(network_manager->GetConnectivity(&connectivity)))
                 {
                     if (connectivity & (NLM_CONNECTIVITY_IPV4_LOCALNETWORK | NLM_CONNECTIVITY_IPV4_SUBNET | NLM_CONNECTIVITY_IPV6_LOCALNETWORK | NLM_CONNECTIVITY_IPV6_SUBNET))
-                    {
                         status = INTERNET_STATUS::CONNECTED_TO_LOCAL;
-                    }
                 }
 
                 network_manager->Release();
@@ -235,7 +204,8 @@ std::size_t callback(const char* in, std::size_t size, std::size_t num, std::str
     return totalBytes;
 }
 
-std::size_t write_data(void* ptr, std::size_t size, std::size_t nmemb, FILE* stream) {
+std::size_t write_data(void* ptr, std::size_t size, std::size_t nmemb, FILE* stream)
+{
     std::size_t written;
     written = fwrite(ptr, size, nmemb, stream);
     return written;
@@ -250,7 +220,7 @@ void save_json(std::filesystem::path path, nlohmann::json json)
 
 void get_auth_json(std::string username, std::string password, std::string game_tag)
 {
-    std::string site = xorstr_("http://localhost/backend/check.php?username=") + username + xorstr_("&password=") + password + xorstr_("&game=") + game_tag;
+    std::string site = xorstr_("http://localhost/backend/verify.php?username=") + username + xorstr_("&password=") + password + xorstr_("&game=") + game_tag;
     std::string result;
 
     CURL* curl = curl_easy_init();
@@ -266,18 +236,13 @@ void get_auth_json(std::string username, std::string password, std::string game_
         curl_easy_cleanup(curl);
     }
 
-    if (result.empty())
-    {
-        throw_error(xorstr_("Failed to parse auth."));
-        return;
-    }
-
-    g_auth_data = nlohmann::json::parse(result);
+    if (!result.empty())
+        globals.auth_data = nlohmann::json::parse(result);
 }
 
 void get_version()
 {
-    std::string site = xorstr_("http://localhost/backend/check_version.php");
+    std::string site = xorstr_("http://localhost/backend/version.php");
     std::string result;
 
     CURL* curl = curl_easy_init();
@@ -294,17 +259,14 @@ void get_version()
     }
 
     if (result.empty())
-    {
-        throw_error(xorstr_("Failed to parse version."));
-        return;
-    }
+        throw_error(xorstr_("Failed parsing the launcher version."));
 
-    g_version = result;
+    globals.parsed_version = result;
 }
 
 void get_games()
 {
-    std::string site = xorstr_("http://localhost/backend/games_list.php");
+    std::string site = xorstr_("http://localhost/backend/games.php");
     std::string result;
     
     CURL* curl = curl_easy_init();
@@ -321,15 +283,12 @@ void get_games()
     }
 
     if (result.empty())
-    {
-        throw_error(xorstr_("Failed to parse games list."));
-        return;
-    }
+        throw_error(xorstr_("Failed to parse game information."));
 
-    g_list = nlohmann::json::parse(result);
+    globals.game_list = nlohmann::json::parse(result);
 }
 
-int64_t get_current_timestamp()
+std::int64_t get_current_timestamp()
 {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
@@ -344,24 +303,27 @@ std::filesystem::path get_update_path()
 
 std::string get_local_update_date()
 {
-    std::filesystem::path file_path = get_update_path();
-
+    // JSON
     nlohmann::json json;
+
+    // Path
+    std::filesystem::path file_path = get_update_path();
     std::ifstream file(file_path);
 
     if (!file.fail())
     {    
         file >> json;
 
-        // We do this to validate if the user has this game's local time.
+        // Local time of the game present?
         std::string key{};
+
         for (auto& el : json.items())
         {
-            if (el.key() == g_tag)
+            if (el.key() == globals.game_tag)
                 key = el.key();
         }
 
-        // If we got a result
+        // Got a result?
         if (!key.empty())
         {
             int64_t timestamp = json[key][xorstr_("last_update")];
@@ -375,12 +337,13 @@ std::string get_local_update_date()
     return xorstr_("");
 }
 
-// Ideally should be ran after the download function
 void set_local_update_date()
 {
-    std::filesystem::path file_path = get_update_path();
-
+    // JSON
     nlohmann::json json;
+
+    // Path
+    std::filesystem::path file_path = get_update_path();
     std::ifstream file(file_path);
 
     if (!file.fail())
@@ -388,9 +351,9 @@ void set_local_update_date()
         file >> json;
 
         // Update json
-        json[g_tag][xorstr_("last_update")] = get_current_timestamp();
+        json[globals.game_tag][xorstr_("last_update")] = get_current_timestamp();
 
-        // Create or update the file
+        // Create or update
         std::ofstream rest(file_path, std::ios::out | std::ios::trunc);
         rest << json.dump(4);
         rest.close();
@@ -399,8 +362,8 @@ void set_local_update_date()
 
 void get_bonzo()
 {
-    // Downloads folder + file name
-    std::string site = xorstr_("http://localhost/backend/downloads/") + g_file_name;
+    // Folder/file
+    std::string site = xorstr_("http://localhost/backend/downloads/") + globals.file_name;
 
     // File variable
     FILE* fp;
@@ -410,33 +373,35 @@ void get_bonzo()
     if (curl)
     {
         ULONGLONG now = GetTickCount64();
-        fp = fopen(g_path.string().c_str(), xorstr_("wb"));
 
         curl_easy_setopt(curl, CURLOPT_URL, site.c_str());
         curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_SSLv3);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
 
-        curl_easy_perform(curl);
-        curl_easy_cleanup(curl);
-        fclose(fp);
+        fp = fopen(globals.file_path.string().c_str(), xorstr_("wb"));
+        if (fp)
+        {
+            // Write data
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
 
-        g_time = GetTickCount64() - now;
+            // Perform and close
+            curl_easy_perform(curl);
+            fclose(fp);
+        }
+
+        globals.time_taken = GetTickCount64() - now;
     }
     
-    if (std::filesystem::exists(g_path))
-    {
+    if (std::filesystem::exists(globals.file_path))
         set_local_update_date();
-    }
     else
-    {
         throw_error(xorstr_("Unfortunately the launcher failed to download the file, please contact the administrator."));
-    }
 }
 
 void internet_check()
 {
     INTERNET_STATUS status = is_connected_to_internet();
+
     switch (status)
     {
     case INTERNET_STATUS::DISCONNECTED:
@@ -447,39 +412,45 @@ void internet_check()
     }
 }
 
-void main_dbg_check()
+void bad_check()
 {
+    // Check if under VM or debugging
     if (check_virtual() || cpu_debug_registers() || debug_string() || close_handle_exception() || write_buffer())
         blue_screen();
 
+    // Check names of software, process id's, window class names...
     if (is_sniffing())
         terminate(0);
+
+    // Check if person has internet access, so we don't get debugged while offline. This won't give a termination/bluescreen, but will send an error instead.
+    internet_check();
 }
 
 DWORD process_id(std::string name)
 {
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
-    if (hSnapshot == INVALID_HANDLE_VALUE)
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
+    if (snapshot == INVALID_HANDLE_VALUE)
         return false;
 
-    PROCESSENTRY32 ProcEntry;
-    ProcEntry.dwSize = sizeof(PROCESSENTRY32);
+    PROCESSENTRY32 entry;
+    entry.dwSize = sizeof(PROCESSENTRY32);
 
-    if (Process32First(hSnapshot, &ProcEntry)) {
+    if (Process32First(snapshot, &entry))
+    {
         do
         {
-            _bstr_t b(ProcEntry.szExeFile);
+            _bstr_t b(entry.szExeFile);
             const char* c = b;
 
             if (!strcmp(c, name.c_str()))
             {
-                CloseHandle(hSnapshot);
-                return ProcEntry.th32ProcessID;
+                CloseHandle(snapshot);
+                return entry.th32ProcessID;
             }
-        } while (Process32Next(hSnapshot, &ProcEntry));
+        } while (Process32Next(snapshot, &entry));
     }
 
-    CloseHandle(hSnapshot);
+    CloseHandle(snapshot);
     return 0;
 }
 
@@ -541,17 +512,18 @@ bool is_answer_positive(std::string answer)
 
 void run()
 {
-    // Variables
-    std::string wait_for_process{};
+    // Desired process
     std::string desired_process{};
     
-    // Get the process code to inject to
+    // Attempt to hit the needed process
     int hits = 0;
-    for (auto& el : g_list.items())
+
+    for (auto& el : globals.game_list.items())
     {
-        if (el.key() == g_tag)
+        if (el.key() == globals.game_tag)
         {
-            std::string temp = g_list[g_tag][xorstr_("file_info")][xorstr_("process")];
+            std::string temp = globals.game_list[globals.game_tag][xorstr_("file_info")][xorstr_("process")];
+
             if (!temp.empty())
             {
                 desired_process = temp;
@@ -560,89 +532,46 @@ void run()
         }
     }
 
-    // If something messed up
-    if (hits <= 0)
+    // No hits?
+    if (hits == 0)
         throw_error(xorstr_("Couldn't figure out which process the cheat should inject to. Consider contacting an administrator."));
 
-    // Find the game process id
+    // ID of the desired process
     DWORD id = process_id(desired_process);
+
     if (!id)
     {
+        // Wait prompt
         pretty_print(xorstr_("Game process was not found, do you want to wait for it? (Y/N): "));
-        std::getline(std::cin, wait_for_process);
+        std::getline(std::cin, globals.process_input);
 
         // Clear the console, otherwise it would look ugly
         clear_console();
 
         // Figure out if we should wait
-        if (is_answer_positive(wait_for_process))
+        if (is_answer_positive(globals.process_input))
         {
             // Animation ticks
-            ULONGLONG ticks[] = { 0, 0 };
-            ULONGLONG configuration[] = { 4000, 5000 };
+            ULONGLONG tick = 0;
+            ULONGLONG refresh_time = 4000;
 
             // Process placeholder
             DWORD placeholder = NULL;
 
             // Cool text
-            std::string text = fmt::format(xorstr_("Waiting for {} to open"), desired_process);
-
-            // Progress dots
-            int dots = 0;
-            int dots_max = 7; // Maximum amount of dots
-            
-            // First time?
-            bool first_time = true;
+            pretty_print(fmt::format(xorstr_("Waiting for {} to open"), desired_process).c_str());
 
             while (!placeholder)
             {
                 // Current time
                 ULONGLONG now = GetTickCount64();
 
-                for (int i = 0; i < sizeof(configuration) / sizeof(*configuration); i++)
+                if (now - tick > refresh_time)
                 {
-                    if (now - ticks[i] > configuration[i])
-                    {
-                        switch (i)
-                        {
-                        case 1:
-                        {
-                            // Append value
-                            placeholder = process_id(desired_process);
-                        }
-                        case 0:
-                        {
-                            if (first_time)
-                            {
-                                // Print out the text
-                                pretty_print(text.c_str(), 15, 0, 0);
+                    // Append value
+                    placeholder = process_id(desired_process);
 
-                                // Not the first time anymore
-                                first_time = false;
-                            }
-
-                            // Maximum dots
-                            if (dots >= dots_max)
-                            {
-                                // Clear the console
-                                clear_console();
-
-                                // Null them out
-                                dots = 0;
-
-                                // Print out the text
-                                pretty_print(text.c_str(), 15, 0, 0);
-                            }
-
-                            // Add a dot to the string
-                            printf(xorstr_("."));
-
-                            dots++;
-                        }
-                        }
-
-                        ticks[i] = now;
-                    }
+                    tick = now;
                 }
             }
 
@@ -653,68 +582,69 @@ void run()
             clear_console();
         }
         else
-        {
-            throw_error(xorstr_("Game process was not found, terminating."));
-        }
+            throw_error(xorstr_("Game process was not found."));
     }
 
-    // Fill the empty variables with data
-    g_file_name = g_list[g_tag][xorstr_("file_info")][xorstr_("name")];
-    g_path = temporary_directory();
-    g_path /= g_file_name;
+    // Empty variables?
+    globals.file_name = globals.game_list[globals.game_tag][xorstr_("file_info")][xorstr_("name")];
+    globals.file_path = temporary_directory();
+    globals.file_path /= globals.file_name;
 
-    // Get the path
+    // Path
     std::filesystem::path update_path = get_update_path();
 
-    // Do not allow the user to have the file without the update data
-    if (std::filesystem::exists(g_path))
+    // The user to has the file without having the update data?
+    if (std::filesystem::exists(globals.file_path))
     {
-        // Check if the update data doesn't exist
         if (!std::filesystem::exists(update_path))
         {
             // Delete the file
-            std::filesystem::remove(g_path);
+            std::filesystem::remove(globals.file_path);
 
-            // Empty json
+            // Empty JSON
             nlohmann::json json;
 
-            // Create a dummy file
             save_json(update_path, json);
         }
     }
 
-    // UNIX time
-    std::string last_update = g_list[g_tag][xorstr_("last_update")];
-    std::string local_last_update = get_local_update_date();
+    // UNIX
+    std::string last = globals.game_list[globals.game_tag][xorstr_("last_update")];
+    std::string local_last = get_local_update_date();
 
-    // E.g if the latest updated occured later than the latest local update
-    int last_update_int = std::stoi(last_update); // Can be 0, but this value is manual
-    int local_last_update_int = local_last_update.empty() ? 0 : std::stoi(local_last_update); // Can be 0
+    // Localis outdated?
+    int last_i = local_last.empty() ? 0 : std::stoi(last); 
+    int local_last_i = local_last.empty() ? 0 : std::stoi(local_last);
 
     // Safe switch is to prevent a bug where user doesn't have the file, but has the JSON.
     bool safe_switch = false;
+
     while (true)
     {
-        bool download = (last_update_int > local_last_update_int) || safe_switch;
+        bool download = (last_i > local_last_i) || safe_switch;
+
         if (download)
         {
             // Print some info
             pretty_print(xorstr_("Downloading..."));
 
-            // Get our file
-            void(*tramp)();
-            tramp = &get_bonzo;
-            tramp();
+            // Download
+            g_thread_pool->push([&]
+            {
+                void(*tramp)();
+                tramp = &get_bonzo;
+                tramp();
+            });
 
-            // Print out the time that took to download the cheat
-            pretty_print(fmt::format(xorstr_("Downloaded in {} miliseconds."), g_time).c_str());
+            // Time taken
+            pretty_print(fmt::format(xorstr_("Downloaded in {} miliseconds."), globals.time_taken).c_str());
 
             break;
         }
         else
         {
             // If it doesn't exist, enable safe switch and cycle again.
-            if (!std::filesystem::exists(g_path))
+            if (!std::filesystem::exists(globals.file_path))
             {
                 safe_switch = true;
             }
@@ -728,48 +658,44 @@ void run()
     }
 
     // Check if it exists again
-    if (std::filesystem::exists(g_path))
+    if (std::filesystem::exists(globals.file_path))
     {
         // Execution based on file type
-        std::string type = g_list[g_tag][xorstr_("file_info")][xorstr_("type")];
+        std::string type = globals.game_list[globals.game_tag][xorstr_("file_info")][xorstr_("type")];
         
-        // Convert to int
-        int type_f = std::stoi(type);
-        
-        switch (type_f)
+        // DLL
+        if (type == xorstr_("dll"))
         {
-        case 1:
-        {
-            // Check if the dll is already injected into the game
-            HMODULE module_grab = grab_module(id, g_path.filename().string());
-            if (module_grab)
+            // Injected?
+            HMODULE module_g = grab_module(id, globals.file_path.filename().string());
+            if (module_g)
                 throw_error(xorstr_("Software is already injected into the game."));
 
-            // Open the process
+            // Open
             HANDLE process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, id);
             if (!process)
                 throw_error(xorstr_("Failed to open the process."));
 
-            // Allocate space in the process for the dll 
+            // Allocate
             LPVOID memory = LPVOID(VirtualAllocEx(process, nullptr, MAX_PATH, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
             if (!memory)
                 throw_error(xorstr_("Failed to allocate memory in the process."));
 
-            // Write the string name of our dll in the allocated memory
-            if (!WriteProcessMemory(process, memory, g_path.string().c_str(), MAX_PATH, nullptr))
+            // Write name string
+            if (!WriteProcessMemory(process, memory, globals.file_path.string().c_str(), MAX_PATH, nullptr))
                 throw_error(xorstr_("Failed to write in process's memory."));
 
-            // Get the module
-            HMODULE module_handle = GetModuleHandleA(xorstr_("kernel32.dll"));
-            if (module_handle == INVALID_HANDLE_VALUE || !is_valid_ptr(module_handle))
+            // Module
+            HMODULE module = GetModuleHandleA(xorstr_("kernel32.dll"));
+            if (module == INVALID_HANDLE_VALUE || !module)
                 throw_error(xorstr_("Failed to get the kernel module handle."));
 
-            // Get the LoadLibraryA adress
-            FARPROC func_address = GetProcAddress(module_handle, xorstr_("LoadLibraryA"));
-            if (!is_valid_ptr(func_address))
+            // LoadLibrary
+            FARPROC func_address = GetProcAddress(module, xorstr_("LoadLibraryA"));
+            if (!func_address)
                 throw_error(xorstr_("Failed to get the loadlibrary function address."));
 
-            // Load the dll
+            // Load
             HANDLE thread = CreateRemoteThread(process, nullptr, NULL, LPTHREAD_START_ROUTINE(func_address), memory, NULL, nullptr);
             if (!thread)
                 throw_error(xorstr_("Failed to create a remote thread."));
@@ -788,314 +714,300 @@ void run()
 
             // Congratulate
             pretty_print(xorstr_("Injection success."));
-
-            break;
         }
-        case 2:
+        // EXE
+        else if (type == xorstr_("exe"))
         {
             // Convert to the needed data-type
-            _bstr_t b = g_path.string().c_str();
+            _bstr_t b = globals.file_path.string().c_str();
 
             // Execution
             ShellExecute(0, 0, b, 0, 0, SW_SHOWDEFAULT);
 
             // Congratulate
             pretty_print(xorstr_("Process started."));
-
-            break;
         }
-        default:
-        {
+        else
             throw_error(xorstr_("Could not figure out how to start the cheat, please contact an administrator."));
-
-            break;
-        }
-        }
     }
     else
-    {
         throw_error(xorstr_("The needed file is not present, terminating."));
-    }
 }
 
 int main()
 {
-    // Initialize thread pool
+    // Thread pool
     auto thread_pool_instance = std::make_unique<thread_pool>();
 
-    while (true)
+    // Protection
+    g_thread_pool->push([&]
     {
-        // Protection
+        while (true)
+        {
+            void(*tramp)();
+            tramp = &bad_check;
+            tramp();
+        }
+    });
+
+    // Window title
+    set_console_things(xorstr_("Sixthworks"));
+
+    if (globals.verify_launcher_version)
+    {
+        // Version
         g_thread_pool->push([&]
         {
-            while (true)
-            {
-                void(*tramp)();
-                tramp = &main_dbg_check;
-                tramp();
-
-                void(*tramp_1)();
-                tramp_1 = &internet_check;
-                tramp_1();
-            }
+            void(*tramp)();
+            tramp = &get_version;
+            tramp();
         });
 
-        // Custom window title
-        set_console_things(xorstr_("Sixthworks"));
+        // Waiting
+        bool version_one = false;
 
-        // Will be used later
-        int attempts{};
-
-        // Version check
+        while (globals.parsed_version.empty())
         {
-            g_thread_pool->push([&]
+            if (!version_one)
             {
-                void(*tramp)();
-                tramp = &get_version;
-                tramp();
-            });
+                // Timer
+                globals.time_now = GetTickCount64();
+
+                version_one = true;
+            }
             
-            while (g_version.empty())
-            {
-                if (attempts >= 10)
-                {
-                    throw_error(xorstr_("Getting the current version took too long, terminating."));
-                    break;
-                }
-
-                attempts++;
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            }
-            attempts = 0;
-
-            // Version outdated check
-            if (g_current_version != g_version)
-            {
-                throw_error(xorstr_("Your launcher version does not match the latest version, consider updating the launcher."));
-            }
+            globals.time_taken = GetTickCount64();
         }
 
-        // Static
-        nlohmann::json login_json;
-        std::filesystem::path p_file = static_name;
-        std::ifstream file(p_file);
+        // Outdated?
+        if (globals.current_version != globals.parsed_version)
+            return throw_error(xorstr_("Your launcher version does not match the latest version, consider updating the launcher."));
 
-        // Variables
-        std::string username{};
-        std::string password{};
-        std::string game_choice{};
-        std::string remember_choice{};
+#ifdef DEBUG
+        pretty_print(fmt::format(xorstr_("Launcher is up to date, took {}ms."), globals.time_taken - globals.time_now).c_str());
+#endif // DEBUG
+    }
 
-        if (!file.fail())
-        {
-            file >> login_json;
-            
-            // Username
-            if (login_json.find(xorstr_("username")) != login_json.end())
-            {
-                username = login_json[xorstr_("username")];
-            }
-            else
-            {
-                throw_error(xorstr_("No username found in file."));
-            }
+    // Remember
+    nlohmann::json remember_json;
 
-            // Password
-            if (login_json.find(xorstr_("password")) != login_json.end())
-            {
-                password = login_json[xorstr_("password")];
-            }
-            else
-            {
-                throw_error(xorstr_("No password found in file."));
-            }
+    // File
+    std::filesystem::path remember_file = globals.remember_file_name;
+    std::ifstream remember_stream(remember_file);
 
-            // Game tag
-            if (login_json.find(xorstr_("game_tag")) != login_json.end())
-            {
-                g_tag = login_json[xorstr_("game_tag")];
-            }
+    if (!remember_stream.fail())
+    {
+        remember_stream >> remember_json;
 
-            g_auth_static = true;
-        }
+        // Username
+        if (remember_json.find(xorstr_("username")) != remember_json.end())
+            globals.username_input = remember_json[xorstr_("username")];
         else
-        {
-            // Username input
-            pretty_print(xorstr_("Username:"));
-            std::getline(std::cin, username);
+            return throw_error(xorstr_("No username found in file."));
 
-            // Password input
-            pretty_print(xorstr_("Password:"));
-            std::getline(std::cin, password);
+        // Password
+        if (remember_json.find(xorstr_("password")) != remember_json.end())
+            globals.password_input = remember_json[xorstr_("password")];
+        else
+            return throw_error(xorstr_("No password found in file."));
+
+        // Game
+        if (remember_json.find(xorstr_("game_tag")) != remember_json.end())
+            globals.game_tag = remember_json[xorstr_("game_tag")];
+
+        // Using remember
+        globals.using_remember = true;
+    }
+    else
+    {
+        // Ask for username
+        pretty_print(xorstr_("Username:"));
+        std::getline(std::cin, globals.username_input);
+
+        // Ask for password
+        pretty_print(xorstr_("Password:"));
+        std::getline(std::cin, globals.password_input);
+    }
+
+    // Games
+    g_thread_pool->push([&]
+    {
+        void(*tramp)();
+        tramp = &get_games;
+        tramp();
+    });
+
+    // Waiting
+    bool games_one = false;
+
+    while (globals.game_list.empty())
+    {
+        if (!games_one)
+        {
+            // Timer
+            globals.time_now = GetTickCount64();
+
+            games_one = true;
         }
 
-        // Game list
+        globals.time_taken = GetTickCount64();
+    }
+
+#ifdef DEBUG
+    pretty_print(fmt::format(xorstr_("Game information received successfully, took {}ms."), globals.time_taken - globals.time_now).c_str());
+#endif // DEBUG
+
+    // Game choice
+    if (globals.game_tag.empty())
+    {
+        // Vector which needs to be filled
+        std::vector<games> handler;
+
+        // 1 newline at the beginning
+        std::string str = xorstr_("\n");
+
+        int i = 0;
+        for (auto& el : globals.game_list.items())
         {
-            g_thread_pool->push([&]
-            {
-                void(*tramp)();
-                tramp = &get_games;
-                tramp();
-            });
+            // Data
+            games data;
+            data.num  = std::to_string(i + 1);
+            data.name = globals.game_list[el.key()][xorstr_("name")];
+            data.tag  = el.key();
 
-            while (g_list.empty())
-            {
-                if (attempts >= 10)
-                {
-                    throw_error(xorstr_("Getting the game information took too long, terminating."));
-                    break;
-                }
+            handler.push_back(data);
 
-                attempts++;
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            }
-            attempts = 0;
-        }
-        
-        // Ask the user about his game choice
-        if (g_tag.empty())
-        {
-            // Vector which needs to be filled
-            std::vector<games> handler;
+            // New line
+            str += xorstr_("") + data.num + xorstr_(": ") + data.name + xorstr_("\n");
 
-            // 1 newline at the beginning
-            std::string to_print = xorstr_("\n");
-
-            int i = 0;
-            for (auto& el : g_list.items())
-            {
-                std::string num, name, tag;
-                num = std::to_string(i + 1);
-                name = g_list[el.key()][xorstr_("name")];
-                tag  = el.key();
-
-                // Fill vector with data
-                games data;
-                data.num = num;
-                data.name = name;
-                data.tag = tag;
-
-                handler.push_back(data);
-
-                // Append string
-                to_print += xorstr_("") + num + xorstr_(": ") + name + xorstr_("\n");
-
-                i++;
-            }
+            // Push to handler
+            handler.push_back(data);
             
-            // Another one
-            to_print += xorstr_("\n");
-            to_print += xorstr_("Enter the game number which you are willing to play with the cheat: ");
+            i++;
+        }
+            
+        str += xorstr_("\n");
+        str += xorstr_("Enter the game number which you are willing to play with the cheat: ");
 
-            pretty_print(to_print.c_str(), 15, 0, 0);
-            std::getline(std::cin, game_choice);
+        // Game input
+        pretty_print(str.c_str(), 15, 0, 0);
+        std::getline(std::cin, globals.game_input);
 
-            // Print 1 extra symbol, the error message looks retarded if not this.
-            printf(xorstr_("\n"));
+        // Newline
+        printf(xorstr_("\n"));
 
-            // Choosing the correct tag by value
-            int hits = 0;
-            for (const auto& rs : handler)
+        // Correct tag by value
+        int hits = 0;
+
+        for (const auto& rs : handler)
+        {
+            if (globals.game_input == rs.num)
             {
-                if (game_choice == rs.num)
+                globals.game_tag = rs.tag;
+                hits++;
+            }
+        }
+
+        // No hits?
+        if (hits <= 0)
+            return throw_error(xorstr_("Invalid game choice."));
+
+        // Clear
+        clear_console();
+    }
+
+    // Auth
+    g_thread_pool->push([&]
+    {
+        void(*tramp)(std::string, std::string, std::string);
+        tramp = &get_auth_json;
+        tramp(globals.username_input, globals.password_input, globals.game_tag);
+    });
+
+    // Waiting
+    bool auth_one = false;
+
+    while (globals.auth_data.empty())
+    {
+        if (!auth_one)
+        {
+            // Timer
+            globals.time_now = GetTickCount64();
+
+            auth_one = true;
+        }
+
+        globals.time_taken = GetTickCount64();
+    }
+
+#ifdef DEBUG
+    pretty_print(fmt::format(xorstr_("Sending authentication data, took {}ms."), globals.time_taken - globals.time_now).c_str());
+#endif // DEBUG
+
+    // Verify
+    if (globals.auth_data.find(xorstr_("status")) != globals.auth_data.end())
+    {
+        // Status
+        std::string status = globals.auth_data[xorstr_("status")];
+
+        // Success?
+        if (status == xorstr_("success"))
+        {
+            // Wants to remember?
+            if (!globals.using_remember)
+            {
+                pretty_print(xorstr_("Do you want the software to remember your choices? (Y/N): "));
+                std::getline(std::cin, globals.remember_input);
+
+                // Positive?
+                if (is_answer_positive(globals.remember_input))
                 {
-                    g_tag = rs.tag;
-                    hits++;
+                    // JSON
+                    nlohmann::json json;
+
+                    // Must be present
+                    json[xorstr_("username")] = globals.username_input;
+                    json[xorstr_("password")] = globals.password_input;
+
+                    // Misc
+                    json[xorstr_("game")] = globals.game_tag;
+
+                    // Save to json
+                    save_json(remember_file, json);
                 }
             }
 
-            // Check if no hits
-            if (hits <= 0)
-                throw_error(xorstr_("Invalid game choice."));
-
-            // Clear the console, because the number looks kinda bad above the text
+            // Clear the console, info is no longer needed.
             clear_console();
-        }
 
-        // Auth
-        {
-            g_thread_pool->push([&]
-            {
-                void(*tramp)(std::string, std::string, std::string);
-                tramp = &get_auth_json;
-                tramp(username, password, g_tag);
-            });
+            // Run
+            run();
 
-            // Wait for auth to load
-            while (g_auth_data.empty())
-            {
-                if (attempts >= 10)
-                {
-                    throw_error(xorstr_("Response from the auth was too long, terminating."));
-                    break;
-                }
-
-                attempts++;
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            }
-            attempts = 0;
-        }
-
-        // Scan the json
-        if (g_auth_data.find(xorstr_("status")) != g_auth_data.end())
-        {
-            if (g_auth_data[xorstr_("status")] == xorstr_("success"))
-            {
-                // Ask the user if he wants the software to remember him
-                if (!g_auth_static)
-                {
-                    pretty_print(xorstr_("Do you want the software to remember your choices? (Y/N): "));
-                    std::getline(std::cin, remember_choice);
-
-                    // If the user wrote a good answer
-                    if (is_answer_positive(remember_choice))
-                    {
-                        // Json object
-                        nlohmann::json json;
-                        json[xorstr_("username")] = username;
-                        json[xorstr_("password")] = password;
-                        json[xorstr_("game_tag")] = g_tag;
-
-                        // Save to json
-                        save_json(p_file, json);
-                    }
-                }
-
-                // Clear the console, we don't need any info on screen anymore
-                clear_console();
-
-                // Execute our hack
-                run();
-
-                // Wait 3 seconds and exit
-                terminate(3);
-            }
-            else
-            {
-                if (g_auth_data.find(xorstr_("error")) != g_auth_data.end())
-                {
-                    if (g_auth_data[xorstr_("error")].is_string())
-                    {
-                        std::string error = g_auth_data[xorstr_("error")];
-                        throw_error(error.c_str());
-                    }
-                    else
-                    {
-                        throw_error(xorstr_("Login failed."));
-                    }
-                }
-                else
-                {
-                    throw_error(xorstr_("Login failed."));
-                }
-            }
+            // Wait 3 seconds and exit
+            return terminate(3);
         }
         else
         {
-            throw_error(xorstr_("Failed getting status."));
-        }
+            if (globals.auth_data.find(xorstr_("error")) != globals.auth_data.end())
+            {
+                // Error
+                std::string error = globals.auth_data[xorstr_("error")];
 
-        terminate(0);
+                // Empty?
+                if (error.empty())
+                    return throw_error(xorstr_("Login failed."));
+                else
+                    return throw_error(error.c_str());
+            }
+            else
+            {
+                throw_error(xorstr_("Login failed."));
+            }
+        }
+    }
+    else
+    {
+        return throw_error(xorstr_("Failed getting authentication status."));
     }
 
     return -1;

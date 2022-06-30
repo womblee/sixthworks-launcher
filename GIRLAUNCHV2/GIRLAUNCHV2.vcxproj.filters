@@ -1,22 +1,23 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClInclude Include="xorstr.h" />
-    <ClInclude Include="bsod.h">
+    <ClInclude Include="xorstr.hpp" />
+    <ClInclude Include="bsod.hpp">
       <Filter>protection</Filter>
     </ClInclude>
-    <ClInclude Include="anti_bad.h">
+    <ClInclude Include="protection.hpp">
       <Filter>protection</Filter>
     </ClInclude>
-    <ClInclude Include="thread_pool.h" />
+    <ClInclude Include="thread_pool.hpp" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="globals.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="bsod.cpp">
       <Filter>protection</Filter>
     </ClCompile>
-    <ClCompile Include="anti_bad.cpp">
+    <ClCompile Include="protection.cpp">
       <Filter>protection</Filter>
     </ClCompile>
     <ClCompile Include="thread_pool.cpp" />

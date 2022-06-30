@@ -1,8 +1,8 @@
-#include "anti_bad.h"
+#include "protection.hpp"
+#include "xorstr.hpp"
 #include <Windows.h>
 #include <TlHelp32.h>
 #include <string>
-#include "xorstr.h"
 #include <vector>
 
 std::vector<std::string> BadWindowClassList

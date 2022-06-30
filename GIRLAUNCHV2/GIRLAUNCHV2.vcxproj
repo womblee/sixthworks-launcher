@@ -144,17 +144,18 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="anti_bad.cpp" />
+    <ClCompile Include="protection.cpp" />
     <ClCompile Include="bsod.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="thread_pool.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="anti_bad.h" />
-    <ClInclude Include="bsod.h" />
+    <ClInclude Include="globals.hpp" />
+    <ClInclude Include="protection.hpp" />
+    <ClInclude Include="bsod.hpp" />
     <ClInclude Include="resource.h" />
-    <ClInclude Include="thread_pool.h" />
-    <ClInclude Include="xorstr.h" />
+    <ClInclude Include="thread_pool.hpp" />
+    <ClInclude Include="xorstr.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

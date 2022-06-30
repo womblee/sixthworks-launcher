@@ -1,5 +1,5 @@
-#include "bsod.h"
-#include <windows.h>
+#include "bsod.hpp"
+#include <Windows.h>
 #pragma comment(lib, "ntdll.lib")
 
 extern "C" NTSTATUS NTAPI RtlAdjustPrivilege(ULONG Privilege, BOOLEAN Enable, BOOLEAN CurrentThread, PBOOLEAN OldValue);
