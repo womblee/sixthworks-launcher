@@ -812,8 +812,8 @@ int main()
             return throw_error(xorstr_("No password found in file."));
 
         // Game
-        if (remember_json.find(xorstr_("game_tag")) != remember_json.end())
-            globals.game_tag = remember_json[xorstr_("game_tag")];
+        if (remember_json.find(xorstr_("game")) != remember_json.end())
+            globals.game_tag = remember_json[xorstr_("game")];
 
         // Using remember
         globals.using_remember = true;
