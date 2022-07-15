@@ -51,25 +51,17 @@ void clear_console()
 }
 
 // Structs
-struct tag
-{
-    int col{};
-    std::string str{};
-};
-
 struct games
 {
-    std::string num{};
-    std::string tag{};
-    std::string name{};
+    std::string num, tag, name;
 };
 
-void pretty_print(const char* message, int color = 15, int disable_tag = 0, int add_space = 1)
+void pretty_print(const char* message, int color = 15, int disable_tag = 0, int add_newline = 1)
 {
     if (!disable_tag)
     {
-        // Colored tag
-        std::vector<tag> tag
+        // Tag
+        std::map<int, std::string> tag
         {
             { 5, xorstr_("[") },
             { 9, xorstr_("X") },
@@ -77,28 +69,37 @@ void pretty_print(const char* message, int color = 15, int disable_tag = 0, int 
         };
 
         int i = 0;
-        for (const auto& rsc : tag)
+        for (auto const& [key, value] : tag)
         {
             i++;
 
-            set_text_color(rsc.col);
+            // Color
+            set_text_color(key);
 
-            std::string st = rsc.str;
+            // String
+            std::string format = value;
+
+            // Space
             if (i == tag.size())
-                st += xorstr_(" ");
+                format += xorstr_(" ");
 
-            printf(st.c_str());
+            // Print
+            printf(format.c_str());
         }
     }
 
+    // Reset
     set_text_color(color);
 
+    // Actual
     std::string format = message;
-    if (add_space)
+
+    // Newline
+    if (add_newline)
         format += xorstr_("\n");
 
-    const char* converted = format.c_str();
-    printf(converted);
+    // Print
+    printf(format.c_str());
 }
 
 std::filesystem::path temporary_directory()
@@ -120,12 +121,14 @@ std::filesystem::path temporary_directory()
     return path;
 }
 
-// Termination with delay
+// Termination
 int terminate(int delay)
 {
-    if (delay >= 0)
+    // Delay
+    if (delay > 0)
         std::this_thread::sleep_for(std::chrono::seconds(delay));
 
+    // Terminate
     return TerminateProcess(GetCurrentProcess(), 0);
 }
 
@@ -220,7 +223,7 @@ void save_json(std::filesystem::path path, nlohmann::json json)
 
 void get_auth_json(std::string username, std::string password, std::string game_tag)
 {
-    std::string site = xorstr_("http://localhost/backend/verify.php?username=") + username + xorstr_("&password=") + password + xorstr_("&game=") + game_tag;
+    std::string site = fmt::format(xorstr_("http://localhost/backend/verify.php?username={}&password={}&game={}"), username, password, game_tag);
     std::string result;
 
     CURL* curl = curl_easy_init();
@@ -326,9 +329,13 @@ std::string get_local_update_date()
         // Got a result?
         if (!key.empty())
         {
+            // Timestamp
             int64_t timestamp = json[key][xorstr_("last_update")];
+            
+            // Converted
             std::string epoch = std::to_string(timestamp);
 
+            // Return
             if (!epoch.empty())
                 return epoch;
         }
@@ -363,7 +370,7 @@ void set_local_update_date()
 void get_bonzo()
 {
     // Folder/file
-    std::string site = xorstr_("http://localhost/backend/downloads/") + globals.file_name;
+    std::string site = fmt::format(xorstr_("http://localhost/backend/downloads/{}"), globals.file_name);
 
     // File variable
     FILE* fp;
@@ -381,10 +388,10 @@ void get_bonzo()
         fp = fopen(globals.file_path.string().c_str(), xorstr_("wb"));
         if (fp)
         {
-            // Write data
+            // Write
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
 
-            // Perform and close
+            // Perform
             curl_easy_perform(curl);
             fclose(fp);
         }
@@ -414,15 +421,15 @@ void internet_check()
 
 void bad_check()
 {
-    // Check if under VM or debugging
+    // Under VM? Debugging?
     if (check_virtual() || cpu_debug_registers() || debug_string() || close_handle_exception() || write_buffer())
         blue_screen();
 
-    // Check names of software, process id's, window class names...
+    // Bad method, it works though.
     if (is_sniffing())
         terminate(0);
 
-    // Check if person has internet access, so we don't get debugged while offline. This won't give a termination/bluescreen, but will send an error instead.
+    // No internet?
     internet_check();
 }
 
