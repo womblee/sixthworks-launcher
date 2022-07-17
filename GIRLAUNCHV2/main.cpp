@@ -60,46 +60,45 @@ void pretty_print(const char* message, int color = 15, int disable_tag = 0, int 
 {
     if (!disable_tag)
     {
-        // Tag
-        std::map<int, std::string> tag
+        // Struct
+        struct tag_s
+        {
+            int color;
+
+            std::string character;
+        };
+
+        // Configuration
+        std::vector<tag_s> tag
         {
             { 5, xorstr_("[") },
             { 9, xorstr_("X") },
-            { 5, xorstr_("]") }
+            { 5, xorstr_("]") },
         };
 
-        int i = 0;
-        for (auto const& [key, value] : tag)
+        // Creation
+        for (const auto& rs : tag)
         {
-            i++;
-
             // Color
-            set_text_color(key);
-
-            // String
-            std::string format = value;
-
-            // Space
-            if (i == tag.size())
-                format += xorstr_(" ");
+            set_text_color(rs.color);
 
             // Print
-            printf(format.c_str());
+            printf(rs.character.c_str());
         }
+
+        // Space
+        printf(xorstr_(" "));
     }
 
     // Reset
     set_text_color(color);
 
-    // Actual
-    std::string format = message;
+    // Print
+    printf(message);
 
     // Newline
     if (add_newline)
-        format += xorstr_("\n");
-
-    // Print
-    printf(format.c_str());
+        printf(xorstr_("\n"));
 }
 
 std::filesystem::path temporary_directory()
