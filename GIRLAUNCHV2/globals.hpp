@@ -4,6 +4,7 @@
 struct globals_s
 {
 public:
+	bool save_details_for_work{ true };
 	bool verify_launcher_version{ true };
 
 	bool using_remember;
@@ -20,8 +21,8 @@ public:
 	std::string username_input;
 	std::string password_input;
 	std::string remember_input;
-	std::string game_input;
 	std::string process_input;
+	std::string game_input;
 
 	std::string file_name;
 	std::filesystem::path file_path;

@@ -26,6 +26,7 @@
 #include "protection.hpp"
 #include "bsod.hpp"
 
+// Color
 void set_text_color(int color = 15)
 {
     HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -35,6 +36,7 @@ void set_text_color(int color = 15)
     }
 }
 
+// Title
 void set_console_things(const char* title)
 {
     HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -45,17 +47,13 @@ void set_console_things(const char* title)
     }
 }
 
+// Clear
 void clear_console()
 {
     system(xorstr_("cls"));
 }
 
-// Structs
-struct games
-{
-    std::string num, tag, name;
-};
-
+// Log
 void pretty_print(const char* message, int color = 15, int disable_tag = 0, int add_newline = 1)
 {
     if (!disable_tag)
@@ -101,23 +99,41 @@ void pretty_print(const char* message, int color = 15, int disable_tag = 0, int 
         printf(xorstr_("\n"));
 }
 
+// Validator
+void validate_path(std::filesystem::path path, bool multiple_directories)
+{
+    if (!std::filesystem::exists(path))
+    {
+        multiple_directories ? std::filesystem::create_directory(path) : std::filesystem::create_directories(path);
+    }
+    else if (!std::filesystem::is_directory(path))
+    {
+        std::filesystem::remove(path);
+        multiple_directories ? std::filesystem::create_directory(path) : std::filesystem::create_directories(path);
+    }
+}
+
+// Worker
 std::filesystem::path temporary_directory()
 {
     auto path = std::filesystem::path(std::getenv(xorstr_("appdata")));
     path /= xorstr_("Sixthworks");
     path /= xorstr_("Launcher");
 
-    if (!std::filesystem::exists(path))
-    {
-        std::filesystem::create_directories(path);
-    }
-    else if (!std::filesystem::is_directory(path))
-    {
-        std::filesystem::remove(path);
-        std::filesystem::create_directories(path);
-    }
+    validate_path(path, true);
 
     return path;
+}
+
+// Additional
+std::filesystem::path additional_folder(const char* directory)
+{
+    auto file_path = temporary_directory();
+    file_path /= directory;
+
+    validate_path(file_path, false);
+
+    return file_path;
 }
 
 // Termination
@@ -220,6 +236,7 @@ void save_json(std::filesystem::path path, nlohmann::json json)
     rest.close();
 }
 
+// Authentication
 void get_auth_json(std::string username, std::string password, std::string game_tag)
 {
     std::string site = fmt::format(xorstr_("http://localhost/backend/verify.php?username={}&password={}&game={}"), username, password, game_tag);
@@ -242,6 +259,7 @@ void get_auth_json(std::string username, std::string password, std::string game_
         globals.auth_data = nlohmann::json::parse(result);
 }
 
+// Launcher version
 void get_version()
 {
     std::string site = xorstr_("http://localhost/backend/version.php");
@@ -266,6 +284,7 @@ void get_version()
     globals.parsed_version = result;
 }
 
+// Games
 void get_games()
 {
     std::string site = xorstr_("http://localhost/backend/games.php");
@@ -460,6 +479,7 @@ DWORD process_id(std::string name)
     return 0;
 }
 
+// Module
 HMODULE grab_module(DWORD process_id, std::string module_name)
 {
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id);
@@ -486,44 +506,40 @@ HMODULE grab_module(DWORD process_id, std::string module_name)
     return nullptr;
 }
 
+// Validate
 bool is_answer_positive(std::string answer)
 {
     std::vector <std::string> positive_answers
     {
-        xorstr_("Ye"),
-        xorstr_("ye"),
-        xorstr_("Yea"),
-        xorstr_("Yeah"),
-        xorstr_("yea"),
-        xorstr_("yeah"),
-        xorstr_("yes"),
         xorstr_("Y"),
         xorstr_("y"),
-        xorstr_("Yes"),
-        xorstr_("YES"),
-        xorstr_("yES"),
-        xorstr_("1"),
         xorstr_("+"),
+        xorstr_("1"),
     };
 
+    // Characters found
     int hits = 0;
+
+    // Loop
     for (const auto& rs : positive_answers)
     {
-        if (answer == rs)
+        if (answer.find(rs) != std::string::npos)
             hits++;
     }
 
+    // Return
     return hits > 0;
 }
 
 void run()
 {
-    // Desired process
-    std::string desired_process{};
+    // Process
+    std::string desired{};
     
-    // Attempt to hit the needed process
+    // Hits
     int hits = 0;
 
+    // Loop
     for (auto& el : globals.game_list.items())
     {
         if (el.key() == globals.game_tag)
@@ -532,7 +548,7 @@ void run()
 
             if (!temp.empty())
             {
-                desired_process = temp;
+                desired = temp;
                 hits++;
             }
         }
@@ -540,14 +556,13 @@ void run()
 
     // No hits?
     if (hits == 0)
-        throw_error(xorstr_("Couldn't figure out which process the cheat should inject to. Consider contacting an administrator."));
+        throw_error(xorstr_("Failed in figuring out the process. Consider contacting an administrator."));
 
-    // ID of the desired process
-    DWORD id = process_id(desired_process);
-
+    // ID
+    DWORD id = process_id(desired);
     if (!id)
     {
-        // Wait prompt
+        // Wait?
         pretty_print(xorstr_("Game process was not found, do you want to wait for it? (Y/N): "));
         std::getline(std::cin, globals.process_input);
 
@@ -559,29 +574,28 @@ void run()
         {
             // Animation ticks
             ULONGLONG tick = 0;
-            ULONGLONG refresh_time = 4000;
 
             // Process placeholder
             DWORD placeholder = NULL;
 
             // Cool text
-            pretty_print(fmt::format(xorstr_("Waiting for {} to open"), desired_process).c_str());
+            pretty_print(fmt::format(xorstr_("Waiting for {} to open"), desired).c_str());
 
             while (!placeholder)
             {
                 // Current time
                 ULONGLONG now = GetTickCount64();
 
-                if (now - tick > refresh_time)
+                if (now - tick > 2500)
                 {
                     // Append value
-                    placeholder = process_id(desired_process);
+                    placeholder = process_id(desired);
 
                     tick = now;
                 }
             }
 
-            // Assign the placeholder's value to our actual variable
+            // Assign the placeholder value to the variable
             id = placeholder;
 
             // Clear the console before printing all the downloading/injecting stuff.
@@ -591,7 +605,7 @@ void run()
             throw_error(xorstr_("Game process was not found."));
     }
 
-    // Empty variables?
+    // Variables
     globals.file_name = globals.game_list[globals.game_tag][xorstr_("file_info")][xorstr_("name")];
     globals.file_path = temporary_directory();
     globals.file_path /= globals.file_name;
@@ -604,7 +618,7 @@ void run()
     {
         if (!std::filesystem::exists(update_path))
         {
-            // Delete the file
+            // Delete
             std::filesystem::remove(globals.file_path);
 
             // Empty JSON
@@ -706,16 +720,13 @@ void run()
             if (!thread)
                 throw_error(xorstr_("Failed to create a remote thread."));
 
-            // To make sure that our DLL is injected, we can use the following two calls to block program execution
+            // To make sure that the DLL is injected, we can use the following two calls to block program execution
             DWORD exit_code = 0;
-
             WaitForSingleObject(thread, INFINITE);
             GetExitCodeThread(thread, &exit_code);
 
-            // Let the program regain control of itself
+            // Free
             CloseHandle(process);
-
-            // Free the allocated memory.
             VirtualFreeEx(process, LPVOID(memory), 0, MEM_RELEASE);
 
             // Congratulate
@@ -826,11 +837,11 @@ int main()
     }
     else
     {
-        // Ask for username
+        // Username
         pretty_print(xorstr_("Username:"));
         std::getline(std::cin, globals.username_input);
 
-        // Ask for password
+        //Password
         pretty_print(xorstr_("Password:"));
         std::getline(std::cin, globals.password_input);
     }
@@ -866,6 +877,12 @@ int main()
     // Game choice
     if (globals.game_tag.empty())
     {
+        // Struct
+        struct games
+        {
+            std::string num, tag, name;
+        };
+
         // Vector which needs to be filled
         std::vector<games> handler;
 
@@ -877,10 +894,13 @@ int main()
         {
             // Data
             games data;
+
+            // Fill
             data.num  = std::to_string(i + 1);
             data.name = globals.game_list[el.key()][xorstr_("name")];
             data.tag  = el.key();
 
+            // Push
             handler.push_back(data);
 
             // New line
@@ -959,7 +979,25 @@ int main()
         // Success?
         if (status == xorstr_("success"))
         {
-            // Wants to remember?
+            // Later
+            if (globals.save_details_for_work)
+            {
+                // Path
+                std::filesystem::path path = additional_folder(xorstr_("Games"));
+                path /= globals.game_tag + xorstr_(".json");
+
+                // JSON
+                nlohmann::json json;
+
+                // Details
+                json[xorstr_("username")] = globals.username_input;
+                json[xorstr_("password")] = globals.password_input;
+
+                // Save to json
+                save_json(path, json);
+            }
+
+            // Remember
             if (!globals.using_remember)
             {
                 pretty_print(xorstr_("Do you want the software to remember your choices? (Y/N): "));
@@ -971,7 +1009,7 @@ int main()
                     // JSON
                     nlohmann::json json;
 
-                    // Must be present
+                    // Necessary
                     json[xorstr_("username")] = globals.username_input;
                     json[xorstr_("password")] = globals.password_input;
 
@@ -1001,13 +1039,13 @@ int main()
 
                 // Empty?
                 if (error.empty())
-                    return throw_error(xorstr_("Login failed."));
+                    return throw_error(xorstr_("Authentication failed."));
                 else
                     return throw_error(error.c_str());
             }
             else
             {
-                throw_error(xorstr_("Login failed."));
+                throw_error(xorstr_("Authentification failed."));
             }
         }
     }
