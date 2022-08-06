@@ -36,13 +36,34 @@ void set_text_color(int color = 15)
     }
 }
 
+// Indicator
+void set_console_indicator(bool draw)
+{
+    HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (console)
+    {
+        // Cursor
+        CONSOLE_CURSOR_INFO info;
+
+        GetConsoleCursorInfo(console, &info);
+
+        // Draw
+        info.bVisible = draw;
+
+        SetConsoleCursorInfo(console, &info);
+    }
+}
+
 // Title
 void set_console_things(const char* title)
 {
     HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
     if (console)
     {
+        // Title
         SetConsoleTitleA(title);
+
+        // Charset
         SetConsoleOutputCP(CP_UTF8);
     }
 }
@@ -148,13 +169,13 @@ int terminate_process(int delay)
 }
 
 // Custom error function
-int throw_error(const char* error)
+int throw_error(const char* error, int delay = 3)
 {
     // Print the error
     pretty_print(error, 12);
 
     // Terminate
-    terminate_process(3);
+    terminate_process(delay);
 
     return -1;
 }
@@ -170,6 +191,24 @@ crc get_crc(uintptr_t func, uint8_t size)
         temp += (((uint8_t&)func) + i);
 
     return temp;
+}
+
+// CRC2HEX
+std::string crc_to_hex(crc val)
+{
+    // Hex
+    char hex[20];
+    _itoa(val, hex, 16);
+
+    // Upper
+    std::string upper = hex;
+
+    transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+    // Final
+    std::string str = xorstr_("0x") + upper;
+
+    return str;
 }
 
 // Internet
@@ -233,9 +272,9 @@ INTERNET_STATUS is_connected_to_internet()
 // Result
 std::size_t callback(const char* in, std::size_t size, std::size_t num, std::string* out)
 {
-    const std::size_t totalBytes(size * num);
-    out->append(in, totalBytes);
-    return totalBytes;
+    const std::size_t total(size * num);
+    out->append(in, total);
+    return total;
 }
 
 // File
@@ -350,11 +389,13 @@ void get_games()
     globals.game_list = nlohmann::json::parse(result);
 }
 
+// Timestamp
 std::int64_t get_current_timestamp()
 {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+// File information
 std::filesystem::path get_update_path()
 {
     std::filesystem::path file_path = temporary_directory();
@@ -363,6 +404,7 @@ std::filesystem::path get_update_path()
     return file_path;
 }
 
+// Current one
 std::string get_local_update_date()
 {
     // JSON
@@ -403,6 +445,7 @@ std::string get_local_update_date()
     return xorstr_("");
 }
 
+// Refresh
 void set_local_update_date()
 {
     // JSON
@@ -426,6 +469,7 @@ void set_local_update_date()
     }
 }
 
+// File
 void get_bonzo()
 {
     // Folder/file
@@ -464,6 +508,7 @@ void get_bonzo()
         throw_error(xorstr_("Unfortunately the launcher failed to download the file, please contact the administrator."));
 }
 
+// Internet
 void internet_check()
 {
     INTERNET_STATUS status = is_connected_to_internet();
@@ -473,7 +518,7 @@ void internet_check()
     case INTERNET_STATUS::DISCONNECTED:
     case INTERNET_STATUS::CONNECTED_TO_LOCAL:
     case INTERNET_STATUS::CONNECTION_ERROR:
-        throw_error(xorstr_("Please connect to the internet before using the launcher."));
+        throw_error(xorstr_("Please connect to the internet before using the launcher."), 2);
         break;
     }
 }
@@ -485,11 +530,11 @@ bool crc_check()
     if (!globals.crc_data.empty())
     {
         // Data
-        std::map<std::string, crc> crc_data
+        std::unordered_map<std::string, crc> crc_data
         {
             {
                 xorstr_("TRPC"),
-                get_crc((uintptr_t)terminate_process, 0x2FB)
+                get_crc((uintptr_t)terminate_process, 0x91B)
             },
             {
                 xorstr_("CVR"),
@@ -517,80 +562,88 @@ bool crc_check()
             },
             {
                 xorstr_("IC"),
-                get_crc((uintptr_t)internet_check, 0x5B)
+                get_crc((uintptr_t)internet_check, 0x67B)
             },
             {
                 xorstr_("GV"),
-                get_crc((uintptr_t)get_version, 0x9FB)
+                get_crc((uintptr_t)get_version, 0x21B)
             },
             {
                 xorstr_("GG"),
-                get_crc((uintptr_t)get_games, 0x91B)
+                get_crc((uintptr_t)get_games, 0x13B)
             },
             {
                 xorstr_("GA"),
-                get_crc((uintptr_t)get_auth_json, 0x21B)
+                get_crc((uintptr_t)get_auth_json, 0x83B)
             }
         };
 
+        // One time CRC
         if (globals.debug)
         {
-            // Generator
-            uintptr_t checks[] =
+            // One time only
+            static bool once = false;
+
+            if (!once)
             {
-                (uintptr_t)terminate_process,
-                (uintptr_t)check_virtual,
-                (uintptr_t)cpu_debug_registers,
-                (uintptr_t)debug_string,
-                (uintptr_t)close_handle_exception,
-                (uintptr_t)write_buffer,
-                (uintptr_t)is_sniffing,
-                (uintptr_t)internet_check,
-                (uintptr_t)get_version,
-                (uintptr_t)get_games,
-                (uintptr_t)get_auth_json,
-            };
+                // Notify
+                pretty_print(xorstr_("Generating CRC..."));
 
-            for (int i = 0; i < sizeof(checks) / sizeof(*checks); i++)
-            {
-                // CRC
-                crc great = get_crc(checks[i], 14);
+                // Generator
+                uintptr_t checks[] =
+                {
+                    (uintptr_t)terminate_process,
+                    (uintptr_t)check_virtual,
+                    (uintptr_t)cpu_debug_registers,
+                    (uintptr_t)debug_string,
+                    (uintptr_t)close_handle_exception,
+                    (uintptr_t)write_buffer,
+                    (uintptr_t)is_sniffing,
+                    (uintptr_t)internet_check,
+                    (uintptr_t)get_version,
+                    (uintptr_t)get_games,
+                    (uintptr_t)get_auth_json,
+                };
 
-                // Hex
-                char hex[20];
-                _itoa(great, hex, 16);
+                for (int i = 0; i < sizeof(checks) / sizeof(*checks); i++)
+                {
+                    // CRC
+                    crc great = get_crc(checks[i], 14);
 
-                // Upper
-                std::string upper = hex;
+                    // Fancy
+                    std::string hexadecimal = std::to_string(i) + xorstr_(": ") + crc_to_hex(great);
 
-                transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                    // Print
+                    pretty_print(hexadecimal.c_str(), 15, 1);
 
-                // Print
-                std::string str = std::to_string(i) + xorstr_(" - 0x") + upper;
+                    // Final
+                    if (i == sizeof(checks) / sizeof(*checks) - 1)
+                        pretty_print(xorstr_(""), 15, 1, 1);
+                }
 
-                pretty_print(str.c_str());
+                // Generator
+                int i = 0;
+
+                for (auto const& [key, val] : crc_data)
+                {
+                    // Iterator
+                    i++;
+
+                    // Fancy
+                    std::string hexadecimal = crc_to_hex(val);
+
+                    // Print
+                    std::string str = xorstr_("\"") + key + xorstr_("\" => ") + hexadecimal;
+
+                    if (i != crc_data.size())
+                        str += xorstr_(",");
+
+                    pretty_print(str.c_str(), 15, 1);
+                }
+
+                // Once
+                once = true;
             }
-
-            // Generator
-            for (auto const& [key, val] : crc_data)
-            {
-                // Hex
-                char hex[20];
-                _itoa(val, hex, 16);
-
-                // Upper
-                std::string upper = hex;
-
-                transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-
-                // Print
-                std::string str = xorstr_("\"") + key + xorstr_("\" => ") + xorstr_("0x") + upper + xorstr_(",");
-
-                pretty_print(str.c_str(), 15, 1);
-            }
-
-            // Separator
-            pretty_print(xorstr_("================="));
         }
 
         // Validate
@@ -614,6 +667,7 @@ bool crc_check()
     return false;
 }
 
+// Malicious
 void bad_check()
 {
     // CRC
@@ -632,6 +686,7 @@ void bad_check()
     internet_check();
 }
 
+// Process
 DWORD process_id(std::string name)
 {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
@@ -743,9 +798,15 @@ void run()
     DWORD id = process_id(desired);
     if (!id)
     {
+        // Appear
+        set_console_indicator(true);
+
         // Wait?
         pretty_print(xorstr_("Game process was not found, do you want to wait for it? (Y/N): "));
         std::getline(std::cin, globals.process_input);
+
+        // Disappear
+        set_console_indicator(false);
 
         // Clear the console, otherwise it would look ugly
         clear_console();
@@ -951,6 +1012,9 @@ int main()
     // Window title
     set_console_things(xorstr_("Sixthworks"));
 
+    // Indicator
+    set_console_indicator(false);
+
     // Version
     g_thread_pool->push([&]
         {
@@ -1023,6 +1087,9 @@ int main()
     }
     else
     {
+        // Appear
+        set_console_indicator(true);
+
         // Username
         pretty_print(xorstr_("Username:"));
         std::getline(std::cin, globals.username_input);
@@ -1030,6 +1097,9 @@ int main()
         //Password
         pretty_print(xorstr_("Password:"));
         std::getline(std::cin, globals.password_input);
+
+        // Disappear
+        set_console_indicator(false);
     }
 
     // Games
@@ -1101,6 +1171,9 @@ int main()
         str += xorstr_("\n");
         str += xorstr_("Enter the game number which you are willing to play with the cheat: ");
 
+        // Appear
+        set_console_indicator(true);
+
         // Game input
         pretty_print(str.c_str(), 15, 0, 0);
         std::getline(std::cin, globals.game_input);
@@ -1124,6 +1197,9 @@ int main()
         if (hits <= 0)
             return throw_error(xorstr_("Invalid game choice."));
 
+        // Disappear
+        set_console_indicator(false);
+        
         // Clear
         clear_console();
     }
@@ -1186,8 +1262,14 @@ int main()
             // Remember
             if (!globals.using_remember)
             {
+                // Appear
+                set_console_indicator(true);
+
                 pretty_print(xorstr_("Do you want the software to remember your choices? (Y/N): "));
                 std::getline(std::cin, globals.remember_input);
+
+                // Disappear
+                set_console_indicator(false);
 
                 // Positive?
                 if (is_answer_positive(globals.remember_input))
