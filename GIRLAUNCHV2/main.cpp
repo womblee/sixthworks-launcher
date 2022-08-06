@@ -183,6 +183,7 @@ int throw_error(const char* error, int delay = 3)
 // CRC
 typedef long long crc;
 
+// Get
 crc get_crc(uintptr_t func, uint8_t size)
 {
     crc temp{};
@@ -337,31 +338,6 @@ void get_auth_json(std::string username, std::string password, std::string game_
 
     if (!result.empty())
         globals.auth_data = nlohmann::json::parse(result);
-}
-
-// Launcher version
-void get_version()
-{
-    std::string site = xorstr_("http://localhost/backend/version.php?wanted=launcher");
-    std::string result;
-
-    CURL* curl = curl_easy_init();
-    if (curl)
-    {
-        curl_easy_setopt(curl, CURLOPT_URL, site.c_str());
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, xorstr_("GET"));
-        curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_SSLv3);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result);
-
-        curl_easy_perform(curl);
-        curl_easy_cleanup(curl);
-    }
-
-    if (result.empty())
-        throw_error(xorstr_("Failed parsing the launcher version."));
-
-    globals.parsed_version = result;
 }
 
 // Games
@@ -534,47 +510,43 @@ bool crc_check()
         {
             {
                 xorstr_("TRPC"),
-                get_crc((uintptr_t)terminate_process, 0x91B)
+                get_crc((uintptr_t)terminate_process, 0x21B)
             },
             {
                 xorstr_("CVR"),
-                get_crc((uintptr_t)check_virtual, 0xBBB)
+                get_crc((uintptr_t)check_virtual, 0x83B)
             },
             {
                 xorstr_("CDR"),
-                get_crc((uintptr_t)cpu_debug_registers, 0xBBB)
+                get_crc((uintptr_t)cpu_debug_registers, 0x83B)
             },
             {
                 xorstr_("CSTR"),
-                get_crc((uintptr_t)debug_string, 0x83B)
+                get_crc((uintptr_t)debug_string, 0x4BB)
             },
             {
                 xorstr_("CHE"),
-                get_crc((uintptr_t)close_handle_exception, 0x91B)
+                get_crc((uintptr_t)close_handle_exception, 0x59B)
             },
             {
                 xorstr_("WB"),
-                get_crc((uintptr_t)write_buffer, 0xBBB)
+                get_crc((uintptr_t)write_buffer, 0x83B)
             },
             {
                 xorstr_("ISFN"),
-                get_crc((uintptr_t)is_sniffing, 0x59B)
+                get_crc((uintptr_t)is_sniffing, 0x21B)
             },
             {
                 xorstr_("IC"),
-                get_crc((uintptr_t)internet_check, 0x67B)
-            },
-            {
-                xorstr_("GV"),
-                get_crc((uintptr_t)get_version, 0x21B)
+                get_crc((uintptr_t)internet_check, 0x4BB)
             },
             {
                 xorstr_("GG"),
-                get_crc((uintptr_t)get_games, 0x13B)
+                get_crc((uintptr_t)get_games, 0xD7B)
             },
             {
                 xorstr_("GA"),
-                get_crc((uintptr_t)get_auth_json, 0x83B)
+                get_crc((uintptr_t)get_auth_json, 0x59B)
             }
         };
 
@@ -600,7 +572,6 @@ bool crc_check()
                     (uintptr_t)write_buffer,
                     (uintptr_t)is_sniffing,
                     (uintptr_t)internet_check,
-                    (uintptr_t)get_version,
                     (uintptr_t)get_games,
                     (uintptr_t)get_auth_json,
                 };
@@ -1000,53 +971,15 @@ int main()
 
     // Protection
     g_thread_pool->push([&]
-        {
-            while (true)
-            {
-                void(*tramp)();
-                tramp = &bad_check;
-                tramp();
-            }
-        });
-
-    // Window title
-    set_console_things(xorstr_("Sixthworks"));
-
-    // Indicator
-    set_console_indicator(false);
-
-    // Version
-    g_thread_pool->push([&]
+    {
+        while (true)
         {
             void(*tramp)();
-            tramp = &get_version;
+            tramp = &bad_check;
             tramp();
-        });
-
-    // Waiting
-    bool version_one = false;
-
-    while (globals.parsed_version.empty())
-    {
-        if (!version_one)
-        {
-            // Timer
-            globals.time_now = GetTickCount64();
-
-            version_one = true;
         }
+    });
 
-        globals.time_taken = GetTickCount64();
-    }
-
-    // Outdated?
-    if (globals.current_version != globals.parsed_version)
-        return throw_error(xorstr_("Your launcher version does not match the latest version, consider updating the launcher."));
-
-    // Debug
-    if (globals.debug)
-        pretty_print(fmt::format(xorstr_("Launcher is up to date, took {}ms."), globals.time_taken - globals.time_now).c_str());
-    
     // CRC
     g_thread_pool->push([&]
     {
@@ -1054,6 +987,12 @@ int main()
         tramp = &get_crc_json;
         tramp();
     });
+
+    // Window title
+    set_console_things(xorstr_("Sixthworks"));
+
+    // Indicator
+    set_console_indicator(false);
 
     // Remember
     nlohmann::json remember_json;
