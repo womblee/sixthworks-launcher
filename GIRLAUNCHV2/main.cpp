@@ -137,7 +137,7 @@ std::filesystem::path additional_folder(const char* directory)
 }
 
 // Termination
-int terminate(int delay)
+int terminate_process(int delay)
 {
     // Delay
     if (delay > 0)
@@ -154,11 +154,25 @@ int throw_error(const char* error)
     pretty_print(error, 12);
 
     // Terminate
-    terminate(3);
+    terminate_process(3);
 
     return -1;
 }
 
+// CRC
+typedef long long crc;
+
+crc get_crc(uintptr_t func, uint8_t size)
+{
+    crc temp{};
+
+    for (int i = 0x00; i < size; i++)
+        temp += (((uint8_t&)func) + i);
+
+    return temp;
+}
+
+// Internet
 enum class INTERNET_STATUS
 {
     CONNECTED,
@@ -167,6 +181,7 @@ enum class INTERNET_STATUS
     CONNECTION_ERROR
 };
 
+// Connected
 INTERNET_STATUS is_connected_to_internet()
 {
     INTERNET_STATUS status = INTERNET_STATUS::CONNECTION_ERROR;
@@ -215,6 +230,7 @@ INTERNET_STATUS is_connected_to_internet()
     return status;
 }
 
+// Result
 std::size_t callback(const char* in, std::size_t size, std::size_t num, std::string* out)
 {
     const std::size_t totalBytes(size * num);
@@ -222,6 +238,7 @@ std::size_t callback(const char* in, std::size_t size, std::size_t num, std::str
     return totalBytes;
 }
 
+// File
 std::size_t write_data(void* ptr, std::size_t size, std::size_t nmemb, FILE* stream)
 {
     std::size_t written;
@@ -229,11 +246,35 @@ std::size_t write_data(void* ptr, std::size_t size, std::size_t nmemb, FILE* str
     return written;
 }
 
+// Necessary
 void save_json(std::filesystem::path path, nlohmann::json json)
 {
     std::ofstream rest(path, std::ios::out | std::ios::trunc);
     rest << json.dump(4);
     rest.close();
+}
+
+// Validation
+void get_crc_json()
+{
+    std::string site = xorstr_("http://localhost/backend/crc.php?wanted=launcher");
+    std::string result;
+
+    CURL* curl = curl_easy_init();
+    if (curl)
+    {
+        curl_easy_setopt(curl, CURLOPT_URL, site.c_str());
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, xorstr_("GET"));
+        curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_SSLv3);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result);
+
+        curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+    }
+
+    if (!result.empty())
+        globals.crc_data = nlohmann::json::parse(result);
 }
 
 // Authentication
@@ -262,7 +303,7 @@ void get_auth_json(std::string username, std::string password, std::string game_
 // Launcher version
 void get_version()
 {
-    std::string site = xorstr_("http://localhost/backend/version.php");
+    std::string site = xorstr_("http://localhost/backend/version.php?wanted=launcher");
     std::string result;
 
     CURL* curl = curl_easy_init();
@@ -437,15 +478,155 @@ void internet_check()
     }
 }
 
+// Validator
+bool crc_check()
+{
+    // Empty?
+    if (!globals.crc_data.empty())
+    {
+        // Data
+        std::map<std::string, crc> crc_data
+        {
+            {
+                xorstr_("TRPC"),
+                get_crc((uintptr_t)terminate_process, 0x2FB)
+            },
+            {
+                xorstr_("CVR"),
+                get_crc((uintptr_t)check_virtual, 0xBBB)
+            },
+            {
+                xorstr_("CDR"),
+                get_crc((uintptr_t)cpu_debug_registers, 0xBBB)
+            },
+            {
+                xorstr_("CSTR"),
+                get_crc((uintptr_t)debug_string, 0x83B)
+            },
+            {
+                xorstr_("CHE"),
+                get_crc((uintptr_t)close_handle_exception, 0x91B)
+            },
+            {
+                xorstr_("WB"),
+                get_crc((uintptr_t)write_buffer, 0xBBB)
+            },
+            {
+                xorstr_("ISFN"),
+                get_crc((uintptr_t)is_sniffing, 0x59B)
+            },
+            {
+                xorstr_("IC"),
+                get_crc((uintptr_t)internet_check, 0x5B)
+            },
+            {
+                xorstr_("GV"),
+                get_crc((uintptr_t)get_version, 0x9FB)
+            },
+            {
+                xorstr_("GG"),
+                get_crc((uintptr_t)get_games, 0x91B)
+            },
+            {
+                xorstr_("GA"),
+                get_crc((uintptr_t)get_auth_json, 0x21B)
+            }
+        };
+
+        if (globals.debug)
+        {
+            // Generator
+            uintptr_t checks[] =
+            {
+                (uintptr_t)terminate_process,
+                (uintptr_t)check_virtual,
+                (uintptr_t)cpu_debug_registers,
+                (uintptr_t)debug_string,
+                (uintptr_t)close_handle_exception,
+                (uintptr_t)write_buffer,
+                (uintptr_t)is_sniffing,
+                (uintptr_t)internet_check,
+                (uintptr_t)get_version,
+                (uintptr_t)get_games,
+                (uintptr_t)get_auth_json,
+            };
+
+            for (int i = 0; i < sizeof(checks) / sizeof(*checks); i++)
+            {
+                // CRC
+                crc great = get_crc(checks[i], 14);
+
+                // Hex
+                char hex[20];
+                _itoa(great, hex, 16);
+
+                // Upper
+                std::string upper = hex;
+
+                transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+                // Print
+                std::string str = std::to_string(i) + xorstr_(" - 0x") + upper;
+
+                pretty_print(str.c_str());
+            }
+
+            // Generator
+            for (auto const& [key, val] : crc_data)
+            {
+                // Hex
+                char hex[20];
+                _itoa(val, hex, 16);
+
+                // Upper
+                std::string upper = hex;
+
+                transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+                // Print
+                std::string str = xorstr_("\"") + key + xorstr_("\" => ") + xorstr_("0x") + upper + xorstr_(",");
+
+                pretty_print(str.c_str(), 15, 1);
+            }
+
+            // Separator
+            pretty_print(xorstr_("================="));
+        }
+
+        // Validate
+        for (auto& el : globals.crc_data.items())
+        {
+            if (crc_data.find(el.key()) != crc_data.end())
+            {
+                if (!el.value().is_null())
+                {
+                    if (el.value().is_number_integer())
+                    {
+                        if (crc_data[el.key()] != el.value())
+                            return !globals.debug;
+                    }
+                }
+            }
+        }
+    }
+
+    // Return
+    return false;
+}
+
 void bad_check()
 {
+    // CRC
+    if (crc_check())
+        terminate_process(0);
+
     // Under VM? Debugging?
     if (check_virtual() || cpu_debug_registers() || debug_string() || close_handle_exception() || write_buffer())
         blue_screen();
 
     // Bad method, it works though.
     if (is_sniffing())
-        terminate(0);
+        terminate_process(0);
 
     // No internet?
     internet_check();
@@ -758,52 +939,57 @@ int main()
 
     // Protection
     g_thread_pool->push([&]
-    {
-        while (true)
         {
-            void(*tramp)();
-            tramp = &bad_check;
-            tramp();
-        }
-    });
+            while (true)
+            {
+                void(*tramp)();
+                tramp = &bad_check;
+                tramp();
+            }
+        });
 
     // Window title
     set_console_things(xorstr_("Sixthworks"));
 
-    if (globals.verify_launcher_version)
-    {
-        // Version
-        g_thread_pool->push([&]
+    // Version
+    g_thread_pool->push([&]
         {
             void(*tramp)();
             tramp = &get_version;
             tramp();
         });
 
-        // Waiting
-        bool version_one = false;
+    // Waiting
+    bool version_one = false;
 
-        while (globals.parsed_version.empty())
+    while (globals.parsed_version.empty())
+    {
+        if (!version_one)
         {
-            if (!version_one)
-            {
-                // Timer
-                globals.time_now = GetTickCount64();
+            // Timer
+            globals.time_now = GetTickCount64();
 
-                version_one = true;
-            }
-            
-            globals.time_taken = GetTickCount64();
+            version_one = true;
         }
 
-        // Outdated?
-        if (globals.current_version != globals.parsed_version)
-            return throw_error(xorstr_("Your launcher version does not match the latest version, consider updating the launcher."));
-
-#ifdef DEBUG
-        pretty_print(fmt::format(xorstr_("Launcher is up to date, took {}ms."), globals.time_taken - globals.time_now).c_str());
-#endif // DEBUG
+        globals.time_taken = GetTickCount64();
     }
+
+    // Outdated?
+    if (globals.current_version != globals.parsed_version)
+        return throw_error(xorstr_("Your launcher version does not match the latest version, consider updating the launcher."));
+
+    // Debug
+    if (globals.debug)
+        pretty_print(fmt::format(xorstr_("Launcher is up to date, took {}ms."), globals.time_taken - globals.time_now).c_str());
+    
+    // CRC
+    g_thread_pool->push([&]
+    {
+        void(*tramp)();
+        tramp = &get_crc_json;
+        tramp();
+    });
 
     // Remember
     nlohmann::json remember_json;
@@ -870,9 +1056,9 @@ int main()
         globals.time_taken = GetTickCount64();
     }
 
-#ifdef DEBUG
-    pretty_print(fmt::format(xorstr_("Game information received successfully, took {}ms."), globals.time_taken - globals.time_now).c_str());
-#endif // DEBUG
+    // Debug
+    if (globals.debug)
+        pretty_print(fmt::format(xorstr_("Game information received successfully, took {}ms."), globals.time_taken - globals.time_now).c_str());
 
     // Game choice
     if (globals.game_tag.empty())
@@ -966,9 +1152,9 @@ int main()
         globals.time_taken = GetTickCount64();
     }
 
-#ifdef DEBUG
-    pretty_print(fmt::format(xorstr_("Sending authentication data, took {}ms."), globals.time_taken - globals.time_now).c_str());
-#endif // DEBUG
+    // Debug
+    if (globals.debug)
+        pretty_print(fmt::format(xorstr_("Sending authentication data, took {}ms."), globals.time_taken - globals.time_now).c_str());
 
     // Verify
     if (globals.auth_data.find(xorstr_("status")) != globals.auth_data.end())
@@ -1028,7 +1214,7 @@ int main()
             run();
 
             // Wait 3 seconds and exit
-            return terminate(3);
+            return terminate_process(3);
         }
         else
         {

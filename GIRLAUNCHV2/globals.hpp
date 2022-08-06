@@ -4,6 +4,8 @@
 struct globals_s
 {
 public:
+	bool debug{ false };
+
 	bool save_details_for_work{ true };
 	bool verify_launcher_version{ true };
 
@@ -13,6 +15,7 @@ public:
 	std::string current_version = xorstr_("0.0.1");
 	std::string parsed_version;
 
+	nlohmann::json crc_data;
 	nlohmann::json auth_data;
 	nlohmann::json game_list;
 

