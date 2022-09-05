@@ -1,2 +1,3 @@
-# sixthworks-launcher
-Launcher for sixthworks software.
+# Launcher
+Secure launcher I made for having easy access to cheats you bought...
+
