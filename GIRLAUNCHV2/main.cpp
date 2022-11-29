@@ -19,6 +19,7 @@
 #include <fmt/format.h>
 #include <string>
 #include <sstream>
+#include <random>
 
 #include "globals.hpp"
 #include "xorstr.hpp"
@@ -146,6 +147,42 @@ std::filesystem::path temporary_directory()
     return path;
 }
 
+// Administrator rights
+bool is_elevated()
+{
+    BOOL result = FALSE;
+    HANDLE token = NULL;
+
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    {
+        TOKEN_ELEVATION elevation;
+        DWORD size = sizeof(TOKEN_ELEVATION);
+
+        if (GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size))
+        {
+            result = elevation.TokenIsElevated;
+        }
+    }
+
+    if (token)
+        CloseHandle(token);
+
+    return result;
+}
+
+// Random
+std::string random_string(int amount)
+{
+    std::string str(xorstr_("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"));
+
+    std::random_device rd;
+    std::mt19937 generator(rd());
+
+    std::shuffle(str.begin(), str.end(), generator);
+
+    return str.substr(0, amount);  
+}
+
 // Additional
 std::filesystem::path additional_folder(const char* directory)
 {
@@ -178,38 +215,6 @@ int throw_error(const char* error, int delay = 3)
     terminate_process(delay);
 
     return -1;
-}
-
-// CRC
-typedef long long crc;
-
-// Get
-crc get_crc(uintptr_t func, uint8_t size)
-{
-    crc temp{};
-
-    for (int i = 0x00; i < size; i++)
-        temp += (((uint8_t&)func) + i);
-
-    return temp;
-}
-
-// CRC2HEX
-std::string crc_to_hex(crc val)
-{
-    // Hex
-    char hex[20];
-    _itoa(val, hex, 16);
-
-    // Upper
-    std::string upper = hex;
-
-    transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-
-    // Final
-    std::string str = xorstr_("0x") + upper;
-
-    return str;
 }
 
 // Internet
@@ -287,34 +292,18 @@ std::size_t write_data(void* ptr, std::size_t size, std::size_t nmemb, FILE* str
 }
 
 // Necessary
-void save_json(std::filesystem::path path, nlohmann::json json)
+void save_text(std::filesystem::path path, std::string contents)
 {
     std::ofstream rest(path, std::ios::out | std::ios::trunc);
-    rest << json.dump(4);
+    rest << contents;
     rest.close();
 }
 
-// Validation
-void get_crc_json()
+// JSON
+void save_json(std::filesystem::path path, nlohmann::json json)
 {
-    std::string site = xorstr_("http://localhost/backend/crc.php?wanted=launcher");
-    std::string result;
-
-    CURL* curl = curl_easy_init();
-    if (curl)
-    {
-        curl_easy_setopt(curl, CURLOPT_URL, site.c_str());
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, xorstr_("GET"));
-        curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_SSLv3);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result);
-
-        curl_easy_perform(curl);
-        curl_easy_cleanup(curl);
-    }
-
-    if (!result.empty())
-        globals.crc_data = nlohmann::json::parse(result);
+    // Simple
+    save_text(path, json.dump(4));
 }
 
 // Authentication
@@ -338,6 +327,31 @@ void get_auth_json(std::string username, std::string password, std::string game_
 
     if (!result.empty())
         globals.auth_data = nlohmann::json::parse(result);
+}
+
+// Version pack
+void get_version()
+{
+    std::string site = xorstr_("http://localhost/backend/phrase.php?wanted=launcher");
+    std::string result;
+
+    CURL* curl = curl_easy_init();
+    if (curl)
+    {
+        curl_easy_setopt(curl, CURLOPT_URL, site.c_str());
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, xorstr_("GET"));
+        curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_SSLv3);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result);
+
+        curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+    }
+
+    if (result.empty())
+        throw_error(xorstr_("Failed to receive build information."));
+
+    globals.launcher_version = result;
 }
 
 // Games
@@ -439,9 +453,7 @@ void set_local_update_date()
         json[globals.game_tag][xorstr_("last_update")] = get_current_timestamp();
 
         // Create or update
-        std::ofstream rest(file_path, std::ios::out | std::ios::trunc);
-        rest << json.dump(4);
-        rest.close();
+        save_json(file_path, json);
     }
 }
 
@@ -458,12 +470,11 @@ void get_bonzo()
     CURL* curl = curl_easy_init();
     if (curl)
     {
-        ULONGLONG now = GetTickCount64();
-
         curl_easy_setopt(curl, CURLOPT_URL, site.c_str());
         curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_SSLv3);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
 
+        // Open
         fp = fopen(globals.file_path.string().c_str(), xorstr_("wb"));
         if (fp)
         {
@@ -475,7 +486,8 @@ void get_bonzo()
             fclose(fp);
         }
 
-        globals.time_taken = GetTickCount64() - now;
+        // Complete
+        globals.download_complete = true;
     }
     
     if (std::filesystem::exists(globals.file_path))
@@ -499,152 +511,26 @@ void internet_check()
     }
 }
 
-// Validator
-bool crc_check()
+// Version
+void version_check()
 {
-    // Empty?
-    if (!globals.crc_data.empty())
+    if (globals.launcher_version.empty())
     {
-        // Data
-        std::unordered_map<std::string, crc> crc_data
-        {
-            {
-                xorstr_("TRPC"),
-                get_crc((uintptr_t)terminate_process, 0x21B)
-            },
-            {
-                xorstr_("CVR"),
-                get_crc((uintptr_t)check_virtual, 0x83B)
-            },
-            {
-                xorstr_("CDR"),
-                get_crc((uintptr_t)cpu_debug_registers, 0x83B)
-            },
-            {
-                xorstr_("CSTR"),
-                get_crc((uintptr_t)debug_string, 0x4BB)
-            },
-            {
-                xorstr_("CHE"),
-                get_crc((uintptr_t)close_handle_exception, 0x59B)
-            },
-            {
-                xorstr_("WB"),
-                get_crc((uintptr_t)write_buffer, 0x83B)
-            },
-            {
-                xorstr_("ISFN"),
-                get_crc((uintptr_t)is_sniffing, 0x21B)
-            },
-            {
-                xorstr_("IC"),
-                get_crc((uintptr_t)internet_check, 0x4BB)
-            },
-            {
-                xorstr_("GG"),
-                get_crc((uintptr_t)get_games, 0xD7B)
-            },
-            {
-                xorstr_("GA"),
-                get_crc((uintptr_t)get_auth_json, 0x59B)
-            }
-        };
-
-        // One time CRC
-        if (globals.debug)
-        {
-            // One time only
-            static bool once = false;
-
-            if (!once)
-            {
-                // Notify
-                pretty_print(xorstr_("Generating CRC..."));
-
-                // Generator
-                uintptr_t checks[] =
-                {
-                    (uintptr_t)terminate_process,
-                    (uintptr_t)check_virtual,
-                    (uintptr_t)cpu_debug_registers,
-                    (uintptr_t)debug_string,
-                    (uintptr_t)close_handle_exception,
-                    (uintptr_t)write_buffer,
-                    (uintptr_t)is_sniffing,
-                    (uintptr_t)internet_check,
-                    (uintptr_t)get_games,
-                    (uintptr_t)get_auth_json,
-                };
-
-                for (int i = 0; i < sizeof(checks) / sizeof(*checks); i++)
-                {
-                    // CRC
-                    crc great = get_crc(checks[i], 14);
-
-                    // Fancy
-                    std::string hexadecimal = std::to_string(i) + xorstr_(": ") + crc_to_hex(great);
-
-                    // Print
-                    pretty_print(hexadecimal.c_str(), 15, 1);
-
-                    // Final
-                    if (i == sizeof(checks) / sizeof(*checks) - 1)
-                        pretty_print(xorstr_(""), 15, 1, 1);
-                }
-
-                // Generator
-                int i = 0;
-
-                for (auto const& [key, val] : crc_data)
-                {
-                    // Iterator
-                    i++;
-
-                    // Fancy
-                    std::string hexadecimal = crc_to_hex(val);
-
-                    // Print
-                    std::string str = xorstr_("\"") + key + xorstr_("\" => ") + hexadecimal;
-
-                    if (i != crc_data.size())
-                        str += xorstr_(",");
-
-                    pretty_print(str.c_str(), 15, 1);
-                }
-
-                // Once
-                once = true;
-            }
-        }
-
-        // Validate
-        for (auto& el : globals.crc_data.items())
-        {
-            if (crc_data.find(el.key()) != crc_data.end())
-            {
-                if (!el.value().is_null())
-                {
-                    if (el.value().is_number_integer())
-                    {
-                        if (crc_data[el.key()] != el.value())
-                            return !globals.debug;
-                    }
-                }
-            }
-        }
+        // Too much time has passed already
+        if (GetTickCount64() - globals.time_build > 8500)
+            throw_error(xorstr_("Timed out getting build information."));
     }
-
-    // Return
-    return false;
+    else
+    {
+        // Outdated
+        if (globals.launcher_version != globals.nowadays_version)
+            throw_error(xorstr_("Your launcher build is outdated, consider downloading a newer version."));
+    }
 }
 
 // Malicious
 void bad_check()
 {
-    // CRC
-    if (crc_check())
-        terminate_process(0);
-
     // Under VM? Debugging?
     if (check_virtual() || cpu_debug_registers() || debug_string() || close_handle_exception() || write_buffer())
         blue_screen();
@@ -655,6 +541,9 @@ void bad_check()
 
     // No internet?
     internet_check();
+
+    // Outdated version?
+    version_check();
 }
 
 // Process
@@ -684,33 +573,6 @@ DWORD process_id(std::string name)
 
     CloseHandle(snapshot);
     return 0;
-}
-
-// Module
-HMODULE grab_module(DWORD process_id, std::string module_name)
-{
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process_id);
-    if (hSnapshot == INVALID_HANDLE_VALUE)
-        return nullptr;
-
-    MODULEENTRY32 ModEntry;
-    if (Module32First(hSnapshot, &ModEntry))
-    {
-        do
-        {
-            _bstr_t b(ModEntry.szModule);
-            const char* c = b;
-
-            if (!strcmp(c, module_name.c_str()))
-            {
-                CloseHandle(hSnapshot);
-                return HMODULE(ModEntry.modBaseAddr);
-            }
-        } while (Module32Next(hSnapshot, &ModEntry));
-    }
-
-    CloseHandle(hSnapshot);
-    return nullptr;
 }
 
 // Validate
@@ -785,7 +647,7 @@ void run()
         // Figure out if we should wait
         if (is_answer_positive(globals.process_input))
         {
-            // Animation ticks
+            // Time variable
             ULONGLONG tick = 0;
 
             // Process placeholder
@@ -811,22 +673,25 @@ void run()
             // Assign the placeholder value to the variable
             id = placeholder;
 
-            // Clear the console before printing all the downloading/injecting stuff.
+            // Clear the console before printing all the downloading/injecting thingies.
             clear_console();
         }
         else
             throw_error(xorstr_("Game process was not found."));
     }
 
+    // File type
+    std::string type = globals.game_list[globals.game_tag][xorstr_("file_info")][xorstr_("type")];
+    
     // Variables
-    globals.file_name = globals.game_list[globals.game_tag][xorstr_("file_info")][xorstr_("name")];
+    globals.file_name = globals.game_tag + xorstr_(".") + type;
     globals.file_path = temporary_directory();
     globals.file_path /= globals.file_name;
 
     // Path
     std::filesystem::path update_path = get_update_path();
 
-    // The user to has the file without having the update data?
+    // The user has the file without having the update data?
     if (std::filesystem::exists(globals.file_path))
     {
         if (!std::filesystem::exists(update_path))
@@ -845,16 +710,16 @@ void run()
     std::string last = globals.game_list[globals.game_tag][xorstr_("last_update")];
     std::string local_last = get_local_update_date();
 
-    // Localis outdated?
-    int last_i = local_last.empty() ? 0 : std::stoi(last); 
-    int local_last_i = local_last.empty() ? 0 : std::stoi(local_last);
+    // Local is outdated?
+    int last_num = local_last.empty() ? 0 : std::stoi(last); 
+    int local_last_num = local_last.empty() ? 0 : std::stoi(local_last);
 
     // Safe switch is to prevent a bug where user doesn't have the file, but has the JSON.
     bool safe_switch = false;
 
     while (true)
     {
-        bool download = (last_i > local_last_i) || safe_switch;
+        bool download = (last_num > local_last_num) || safe_switch;
 
         if (download)
         {
@@ -869,8 +734,24 @@ void run()
                 tramp();
             });
 
+            // Waiting
+            bool file_one = false;
+
+            while (!globals.download_complete)
+            {
+                if (!file_one)
+                {
+                    // Timer
+                    globals.time_now = GetTickCount64();
+
+                    file_one = true;
+                }
+
+                globals.time_taken = GetTickCount64();
+            }
+
             // Time taken
-            pretty_print(fmt::format(xorstr_("Downloaded in {} miliseconds."), globals.time_taken).c_str());
+            pretty_print(fmt::format(xorstr_("Downloaded in {} miliseconds."), globals.time_taken - globals.time_now).c_str());
 
             break;
         }
@@ -899,11 +780,6 @@ void run()
         // DLL
         if (type == xorstr_("dll"))
         {
-            // Injected?
-            HMODULE module_g = grab_module(id, globals.file_path.filename().string());
-            if (module_g)
-                throw_error(xorstr_("Software is already injected into the game."));
-
             // Open
             HANDLE process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, id);
             if (!process)
@@ -966,12 +842,19 @@ void run()
 
 int main()
 {
+    // Priveleged to run this?
+    auto elevated = is_elevated();
+
+    if (!elevated)
+        throw_error(xorstr_("This application can only be used with administrator privileges."));
+
     // Thread pool
     auto thread_pool_instance = std::make_unique<thread_pool>();
 
     // Protection
     g_thread_pool->push([&]
     {
+        // Loop it
         while (true)
         {
             void(*tramp)();
@@ -980,13 +863,19 @@ int main()
         }
     });
 
-    // CRC
-    g_thread_pool->push([&]
+    // Build information
     {
-        void(*tramp)();
-        tramp = &get_crc_json;
-        tramp();
-    });
+        // Current time
+        globals.time_build = GetTickCount64();
+
+        // Receive
+        g_thread_pool->push([&]
+        {
+            void(*tramp)();
+            tramp = &get_version;
+            tramp();
+        });
+    }
 
     // Window title
     set_console_things(xorstr_("Sixthworks"));
@@ -1181,21 +1070,23 @@ int main()
         if (status == xorstr_("success"))
         {
             // Later
-            if (globals.save_details_for_work)
+            if (globals.share_key)
             {
-                // Path
-                std::filesystem::path path = additional_folder(xorstr_("Games"));
-                path /= globals.game_tag + xorstr_(".json");
+                // Secret
+                std::string secret = globals.auth_data[xorstr_("secret")];
 
-                // JSON
-                nlohmann::json json;
+                // No empty
+                if (!secret.empty())
+                {
+                    // Path
+                    std::filesystem::path path = temporary_directory();
+                    path /= xorstr_("secret.txt");
 
-                // Details
-                json[xorstr_("username")] = globals.username_input;
-                json[xorstr_("password")] = globals.password_input;
-
-                // Save to json
-                save_json(path, json);
+                    // Save to json
+                    save_text(path, secret);
+                }
+                else
+                    throw_error(xorstr_("Failed to share module data, please contact an administrator"));
             }
 
             // Remember

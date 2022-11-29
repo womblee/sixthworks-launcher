@@ -8,15 +8,18 @@ public:
 	bool debug{ false };
 
 	// Necessary
-	bool save_details_for_work{ true };
-	bool verify_launcher_version{ true };
+	bool share_key{ true };
+
+	// Version
+	std::string launcher_version;
+	std::string nowadays_version{ xorstr_("FullMonster") };
 
 	// Remember
 	bool using_remember;
-	std::string remember_file_name = xorstr_("remember.json");
+
+	std::string remember_file_name{ xorstr_("remember_me.json") };
 
 	// JSON
-	nlohmann::json crc_data;
 	nlohmann::json auth_data;
 	nlohmann::json game_list;
 
@@ -32,10 +35,12 @@ public:
 
 	// Download
 	std::string file_name;
+	bool download_complete{ false };
 	std::filesystem::path file_path;
 
-	// Debug
+	// Time
 	ULONGLONG time_taken;
+	ULONGLONG time_build;
 	ULONGLONG time_now;
 };
 
