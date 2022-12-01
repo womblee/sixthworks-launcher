@@ -16,8 +16,9 @@ public:
 
 	// Remember
 	bool using_remember;
+	bool no_game_remember;
 
-	std::string remember_file_name{ xorstr_("remember_me.json") };
+	std::string remember_file_name{ xorstr_("remember.json") };
 
 	// JSON
 	nlohmann::json auth_data;
@@ -30,7 +31,7 @@ public:
 	std::string username_input;
 	std::string password_input;
 	std::string remember_input;
-	std::string process_input;
+	std::string remember_game_input;
 	std::string game_input;
 
 	// Download

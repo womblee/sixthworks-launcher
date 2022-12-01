@@ -206,8 +206,12 @@ int terminate_process(int delay)
 }
 
 // Custom error function
-int throw_error(const char* error, int delay = 3)
+int throw_error(const char* error, int delay = 3, int clear = 0)
 {
+    // Clear?
+    if (clear >= 1)
+        clear_console();
+
     // Print the error
     pretty_print(error, 12);
 
@@ -299,11 +303,23 @@ void save_text(std::filesystem::path path, std::string contents)
     rest.close();
 }
 
-// JSON
+// Save JSON
 void save_json(std::filesystem::path path, nlohmann::json json)
 {
     // Simple
     save_text(path, json.dump(4));
+}
+
+// Read JSON
+nlohmann::json read_json(std::filesystem::path path)
+{
+    nlohmann::json json;
+    std::ifstream file(path);
+
+    if (!file.fail())
+        file >> json;
+
+    return json;
 }
 
 // Authentication
@@ -349,7 +365,7 @@ void get_version()
     }
 
     if (result.empty())
-        throw_error(xorstr_("Failed to receive build information."));
+        throw_error(xorstr_("Failed to receive build information."), 3, 1);
 
     globals.launcher_version = result;
 }
@@ -374,7 +390,7 @@ void get_games()
     }
 
     if (result.empty())
-        throw_error(xorstr_("Failed to parse game information."));
+        throw_error(xorstr_("Failed to parse game information."), 3, 1);
 
     globals.game_list = nlohmann::json::parse(result);
 }
@@ -398,38 +414,29 @@ std::filesystem::path get_update_path()
 std::string get_local_update_date()
 {
     // JSON
-    nlohmann::json json;
+    nlohmann::json json = read_json(get_update_path());
 
-    // Path
-    std::filesystem::path file_path = get_update_path();
-    std::ifstream file(file_path);
+    // Local time of the game present?
+    std::string key{};
 
-    if (!file.fail())
-    {    
-        file >> json;
+    for (auto& el : json.items())
+    {
+        if (el.key() == globals.game_tag)
+            key = el.key();
+    }
 
-        // Local time of the game present?
-        std::string key{};
+    // Got a result?
+    if (!key.empty())
+    {
+        // Timestamp
+        int64_t timestamp = json[key][xorstr_("last_update")];
 
-        for (auto& el : json.items())
-        {
-            if (el.key() == globals.game_tag)
-                key = el.key();
-        }
+        // Converted
+        std::string epoch = std::to_string(timestamp);
 
-        // Got a result?
-        if (!key.empty())
-        {
-            // Timestamp
-            int64_t timestamp = json[key][xorstr_("last_update")];
-            
-            // Converted
-            std::string epoch = std::to_string(timestamp);
-
-            // Return
-            if (!epoch.empty())
-                return epoch;
-        }
+        // Return
+        if (!epoch.empty())
+            return epoch;
     }
 
     return xorstr_("");
@@ -438,23 +445,17 @@ std::string get_local_update_date()
 // Refresh
 void set_local_update_date()
 {
+    // Our path
+    std::filesystem::path path = get_update_path();
+
     // JSON
-    nlohmann::json json;
+    nlohmann::json json = read_json(path);
 
-    // Path
-    std::filesystem::path file_path = get_update_path();
-    std::ifstream file(file_path);
+    // Update JSON
+    json[globals.game_tag][xorstr_("last_update")] = get_current_timestamp();
 
-    if (!file.fail())
-    {
-        file >> json;
-
-        // Update json
-        json[globals.game_tag][xorstr_("last_update")] = get_current_timestamp();
-
-        // Create or update
-        save_json(file_path, json);
-    }
+    // Create or update
+    save_json(path, json);
 }
 
 // File
@@ -518,13 +519,13 @@ void version_check()
     {
         // Too much time has passed already
         if (GetTickCount64() - globals.time_build > 8500)
-            throw_error(xorstr_("Timed out getting build information."));
+            throw_error(xorstr_("Timed out getting build information."), 3, 1);
     }
     else
     {
         // Outdated
         if (globals.launcher_version != globals.nowadays_version)
-            throw_error(xorstr_("Your launcher build is outdated, consider downloading a newer version."));
+            throw_error(xorstr_("Your launcher build is outdated, consider downloading a newer version."), 3, 1);
     }
 }
 
@@ -631,53 +632,31 @@ void run()
     DWORD id = process_id(desired);
     if (!id)
     {
-        // Appear
-        set_console_indicator(true);
+        // Time variable
+        ULONGLONG tick = 0;
 
-        // Wait?
-        pretty_print(xorstr_("Game process was not found, do you want to wait for it? (Y/N): "));
-        std::getline(std::cin, globals.process_input);
+        // Process placeholder
+        DWORD placeholder = NULL;
 
-        // Disappear
-        set_console_indicator(false);
+        // Cool text
+        pretty_print(fmt::format(xorstr_("Waiting for {} to open"), desired).c_str());
 
-        // Clear the console, otherwise it would look ugly
-        clear_console();
-
-        // Figure out if we should wait
-        if (is_answer_positive(globals.process_input))
+        while (!placeholder)
         {
-            // Time variable
-            ULONGLONG tick = 0;
+            // Current time
+            ULONGLONG now = GetTickCount64();
 
-            // Process placeholder
-            DWORD placeholder = NULL;
-
-            // Cool text
-            pretty_print(fmt::format(xorstr_("Waiting for {} to open"), desired).c_str());
-
-            while (!placeholder)
+            if (now - tick > 2000)
             {
-                // Current time
-                ULONGLONG now = GetTickCount64();
+                // Append value
+                placeholder = process_id(desired);
 
-                if (now - tick > 2500)
-                {
-                    // Append value
-                    placeholder = process_id(desired);
-
-                    tick = now;
-                }
+                tick = now;
             }
-
-            // Assign the placeholder value to the variable
-            id = placeholder;
-
-            // Clear the console before printing all the downloading/injecting thingies.
-            clear_console();
         }
-        else
-            throw_error(xorstr_("Game process was not found."));
+
+        // Assign the placeholder value to the variable
+        id = placeholder;
     }
 
     // File type
@@ -871,6 +850,13 @@ int main()
         // Receive
         g_thread_pool->push([&]
         {
+            // We have to do this, we will get an error thrown otherwise
+            if (globals.using_remember)
+            {
+                // That's enough
+                Sleep(5);
+            }
+
             void(*tramp)();
             tramp = &get_version;
             tramp();
@@ -883,17 +869,15 @@ int main()
     // Indicator
     set_console_indicator(false);
 
-    // Remember
-    nlohmann::json remember_json;
-
     // File
     std::filesystem::path remember_file = globals.remember_file_name;
-    std::ifstream remember_stream(remember_file);
 
-    if (!remember_stream.fail())
+    // Remember
+    nlohmann::json remember_json = read_json(remember_file);
+
+    // Neat way to see emptiness
+    if (!remember_json.is_null())
     {
-        remember_stream >> remember_json;
-
         // Username
         if (remember_json.find(xorstr_("username")) != remember_json.end())
             globals.username_input = remember_json[xorstr_("username")];
@@ -909,6 +893,8 @@ int main()
         // Game
         if (remember_json.find(xorstr_("game")) != remember_json.end())
             globals.game_tag = remember_json[xorstr_("game")];
+        else
+            globals.no_game_remember = true;
 
         // Using remember
         globals.using_remember = true;
@@ -997,7 +983,7 @@ int main()
         }
             
         str += xorstr_("\n");
-        str += xorstr_("Enter the game number which you are willing to play with the cheat: ");
+        str += xorstr_("Enter the game number for which you want to load the cheat: ");
 
         // Appear
         set_console_indicator(true);
@@ -1080,6 +1066,16 @@ int main()
                 {
                     // Path
                     std::filesystem::path path = temporary_directory();
+
+                    // Find all .shr files
+                    for (const auto& entry : std::filesystem::directory_iterator(path))
+                    {
+                        // If some file appears, remove it
+                        if (entry.is_regular_file() && entry.path().extension() == xorstr_(".shr"))
+                            std::filesystem::remove(entry);
+                    }
+
+                    // Now the name
                     path /= random_string(6) + xorstr_(".shr"); 
 
                     // Save to json
@@ -1089,13 +1085,17 @@ int main()
                     throw_error(xorstr_("Failed to share module data, please contact an administrator"));
             }
 
+            // Message for game selection
+            std::string game = globals.game_list[globals.game_tag][xorstr_("name")];
+            game = fmt::format(xorstr_("Would you like the launcher to automatically select {}? (Y/N)"), game);
+
             // Remember
             if (!globals.using_remember)
             {
                 // Appear
                 set_console_indicator(true);
 
-                pretty_print(xorstr_("Do you want the software to remember your choices? (Y/N): "));
+                pretty_print(xorstr_("Do you want the launcher to remember your login data? (Y/N): "));
                 std::getline(std::cin, globals.remember_input);
 
                 // Disappear
@@ -1111,8 +1111,51 @@ int main()
                     json[xorstr_("username")] = globals.username_input;
                     json[xorstr_("password")] = globals.password_input;
 
-                    // Misc
-                    json[xorstr_("game")] = globals.game_tag;
+                    // Clear it so it looks good
+                    clear_console();
+
+                    // Indicator
+                    set_console_indicator(true);
+
+                    // Just ask him, nothing special
+                    pretty_print(game.c_str());
+                    std::getline(std::cin, globals.remember_game_input);
+
+                    // Not anymore
+                    set_console_indicator(false);
+
+                    // Give the save to him
+                    if (is_answer_positive(globals.remember_game_input))
+                        json[xorstr_("game")] = globals.game_tag;
+
+                    // Save to json
+                    save_json(remember_file, json);
+                }
+            }
+            else
+            {
+                // What if he wants to select that game again?
+                if (globals.no_game_remember)
+                {
+                    // Read it
+                    nlohmann::json json = read_json(remember_file);
+
+                    // Clear the thing
+                    clear_console();
+
+                    // Indicator
+                    set_console_indicator(true);
+
+                    // Duplicating code but we have to do this
+                    pretty_print(game.c_str());
+                    std::getline(std::cin, globals.remember_game_input);
+
+                    // Not anymore
+                    set_console_indicator(false);
+
+                    // Give the save to him
+                    if (is_answer_positive(globals.remember_game_input))
+                        json[xorstr_("game")] = globals.game_tag;
 
                     // Save to json
                     save_json(remember_file, json);
