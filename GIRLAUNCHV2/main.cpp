@@ -1080,7 +1080,7 @@ int main()
                 {
                     // Path
                     std::filesystem::path path = temporary_directory();
-                    path /= xorstr_("secret.txt");
+                    path /= random_string(6) + xorstr_(".shr"); 
 
                     // Save to json
                     save_text(path, secret);
